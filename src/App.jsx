@@ -1,36 +1,71 @@
 import { useState, useEffect, useCallback } from "react";
 
-// ─── FEEDS ────────────────────────────────────────────────────────────────────
 const PROXY = "https://api.allorigins.win/get?url=";
 const FF_NEWS = PROXY + encodeURIComponent("https://www.forexfactory.com/rss.php");
 const FF_CALENDAR = PROXY + encodeURIComponent("https://www.forexfactory.com/ffcal_week_this.xml");
+const STORAGE_KEY = "th30_last_known";
+
+// ─── BASELINE DEFAULTS — always shown when no live data ───────────────────────
+const BASELINE = {
+  macro: {
+    fed_tone: "NEUTRAL",
+    inflation: "ELEVATED",
+    jobs: "RESILIENT",
+    growth: "SLOWING",
+    risk_tone: "MIXED",
+    ym_pressure: "NEUTRAL",
+    nq_pressure: "NEUTRAL",
+  },
+  news: [
+    {
+      headline: "No live headlines — showing baseline context",
+      effect: "MARKET",
+      impact: "LOW",
+      implication: "Market closed or no active news flow. Baseline macro read is in effect.",
+    },
+    {
+      headline: "Fed policy stance: data dependent, no imminent cuts",
+      effect: "MARKET",
+      impact: "MED",
+      implication: "Rates held steady. NQ sensitive to any forward guidance shift.",
+    },
+    {
+      headline: "Equity futures maintaining upward structure",
+      effect: "MARKET",
+      impact: "MED",
+      implication: "NQ leading. YM lagging. Macro pressure remains upside biased.",
+    },
+  ],
+};
 
 // ─── DESIGN ───────────────────────────────────────────────────────────────────
 const C = {
-  bg: "#04080f",
-  panel: "#080f1c",
-  border: "#0e1f35",
-  dim: "#060d18",
-  accent: "#00c2ff",
-  green: "#00b37a",
-  red: "#e0304a",
-  gold: "#e8a020",
-  muted: "#3a5570",
-  text: "#8fb0cc",
-  bright: "#cce4f5",
-  white: "#eaf4ff",
+  bg: "#050810",
+  surface: "#0a0e1a",
+  card: "#0d1220",
+  border: "#141d35",
+  border2: "#1a2540",
+  accent: "#00d4ff",
+  green: "#00c87a",
+  red: "#ff3d5a",
+  gold: "#f0a500",
+  muted: "#2e4060",
+  dim: "#1c2a45",
+  text: "#7a9bb5",
+  bright: "#c8dff0",
+  white: "#eaf5ff",
 };
 
 const STATUS_META = {
-  FAVORABLE: { color: "#00b37a", label: "FAVORABLE", desc: "Macro, timing, and volatility context are aligned. Structure and execution remain with the trader." },
-  MIXED: { color: "#e8a020", label: "MIXED", desc: "Some context conditions are aligned, others are not. Review each factor individually." },
-  UNFAVORABLE: { color: "#e0304a", label: "UNFAVORABLE", desc: "Context conditions are not aligned. Elevated noise, event risk, or macro conflict is present." },
+  FAVORABLE: { color:"#00c87a", label:"FAVORABLE", desc:"Macro, timing, and volatility context are aligned. Structure and execution remain with the trader." },
+  MIXED: { color:"#f0a500", label:"MIXED", desc:"Some context conditions are aligned, others are not. Review each factor individually." },
+  UNFAVORABLE: { color:"#ff3d5a", label:"UNFAVORABLE", desc:"Context conditions are not aligned. Elevated noise, event risk, or macro conflict is present." },
 };
 
 const EFFECT_META = {
-  MARKET: { color: "#00c2ff", label: "MARKET EFFECT" },
-  INDUSTRY: { color: "#e8a020", label: "INDUSTRY EFFECT" },
-  COMPANY: { color: "#3a5570", label: "COMPANY EFFECT" },
+  MARKET: { color:"#00d4ff", label:"MARKET EFFECT" },
+  INDUSTRY: { color:"#f0a500", label:"INDUSTRY EFFECT" },
+  COMPANY: { color:"#2e4060", label:"COMPANY EFFECT" },
 };
 
 const WINDOWS = [
@@ -42,7 +77,7 @@ const WINDOWS = [
 ];
 
 function getWindowId() {
-  const t = new Date().getHours() * 60 + new Date().getMinutes();
+  const t = new Date().getHours()*60 + new Date().getMinutes();
   if (t < 8*60+55) return "pre";
   if (t < 9*60+30) return "pre";
   if (t < 9*60+33) return "open";
@@ -53,150 +88,174 @@ function getWindowId() {
 
 function getSession() {
   const h = new Date().getUTCHours();
-  if (h >= 13 && h < 22) return "NEW YORK";
-  if (h >= 7 && h < 13) return "LONDON";
-  return "ASIA";
+  if (h >= 13 && h < 22) return { label:"NEW YORK", color:"#00d4ff" };
+  if (h >= 7 && h < 13) return { label:"LONDON", color:"#f0a500" };
+  return { label:"ASIA", color:"#2e4060" };
 }
 
 function isInKeyWindow() {
-  const t = new Date().getHours() * 60 + new Date().getMinutes();
+  const t = new Date().getHours()*60 + new Date().getMinutes();
   return (t >= 8*60+55 && t < 9*60+33) || (t >= 9*60+39 && t < 10*60);
 }
 
-// ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
-const mono = { fontFamily:"'IBM Plex Mono', monospace" };
+function saveToStorage(macro, news) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ macro, news, savedAt: new Date().toISOString() }));
+  } catch {}
+}
 
-function FieldLabel({ children }) {
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function timeAgoLabel(iso) {
+  if (!iso) return null;
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+// ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
+const mono = { fontFamily:"'JetBrains Mono', 'Fira Code', monospace" };
+const display = { fontFamily:"'Syne', sans-serif" };
+
+function toneColor(v) {
+  if (!v) return C.muted;
+  if (/dovish|cooling|soft|resilient|risk.on|upside|expanding/i.test(v)) return C.green;
+  if (/hawkish|hot|weak|slowing|risk.off|downside|contracting/i.test(v)) return C.red;
+  return C.gold;
+}
+
+function pressureColor(v) {
+  if (!v) return C.muted;
+  if (v==="UPSIDE") return C.green;
+  if (v==="DOWNSIDE") return C.red;
+  return C.gold;
+}
+
+function MacroField({ label, value }) {
+  const col = toneColor(value);
   return (
-    <div style={{ ...mono, fontSize:8, letterSpacing:"0.18em", color:C.muted,
-      textTransform:"uppercase", marginBottom:5 }}>
-      {children}
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:`1px solid ${C.border}` }}>
+      <span style={{ ...mono, fontSize:9, color:C.text, letterSpacing:"0.12em", textTransform:"uppercase" }}>{label}</span>
+      <span style={{ ...mono, fontSize:11, fontWeight:700, color:col }}>{value || "—"}</span>
     </div>
   );
 }
 
-function Row({ label, value, color }) {
+function NewsCard({ item }) {
+  const meta = EFFECT_META[item.effect] || EFFECT_META.MARKET;
+  const impactCol = item.impact==="HIGH" ? C.red : item.impact==="MED" ? C.gold : C.muted;
   return (
-    <div style={{ padding:"9px 0", borderBottom:`1px solid ${C.border}25` }}>
-      <FieldLabel>{label}</FieldLabel>
-      <div style={{ color: color || C.bright, fontSize:12, fontWeight:700, ...mono }}>
-        {value || <span style={{ color:C.muted }}>—</span>}
+    <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:10, padding:"14px 16px", marginBottom:10, borderLeft:`3px solid ${meta.color}` }}>
+      <div style={{ display:"flex", gap:6, marginBottom:8, flexWrap:"wrap" }}>
+        <span style={{ ...mono, fontSize:8, fontWeight:700, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:4, background:`${meta.color}18`, color:meta.color, border:`1px solid ${meta.color}35` }}>{meta.label}</span>
+        <span style={{ ...mono, fontSize:8, fontWeight:700, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:4, background:`${impactCol}18`, color:impactCol, border:`1px solid ${impactCol}35` }}>{item.impact}</span>
+      </div>
+      <div style={{ ...display, color:C.white, fontSize:12, fontWeight:600, lineHeight:1.5, marginBottom:8 }}>{item.headline}</div>
+      <div style={{ color:C.text, fontSize:10, lineHeight:1.6 }}>
+        <span style={{ color:meta.color, fontWeight:700 }}>▸ </span>{item.implication}
       </div>
     </div>
   );
 }
 
-function Tag({ text, color }) {
+function Panel({ children, style }) {
   return (
-    <span style={{ ...mono, fontSize:8, fontWeight:700, letterSpacing:"0.1em",
-      padding:"2px 7px", borderRadius:2,
-      background:`${color}18`, color, border:`1px solid ${color}40` }}>
-      {text}
-    </span>
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden", display:"flex", flexDirection:"column", ...style }}>
+      {children}
+    </div>
   );
 }
 
-function PanelHeader({ label, sub }) {
+function PanelHead({ title, sub, right }) {
   return (
-    <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
-      display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-      <span style={{ ...mono, fontSize:9, letterSpacing:"0.2em", color:C.accent, fontWeight:700 }}>{label}</span>
-      {sub && <span style={{ ...mono, fontSize:8, color:C.muted }}>{sub}</span>}
+    <div style={{ padding:"16px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div>
+        <div style={{ ...mono, fontSize:10, fontWeight:700, letterSpacing:"0.2em", color:C.accent }}>{title}</div>
+        {sub && <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:2 }}>{sub}</div>}
+      </div>
+      {right}
     </div>
   );
 }
 
 function Spinner() {
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"16px 0" }}>
-      <div style={{ width:10, height:10, border:`1.5px solid ${C.border}`,
-        borderTop:`1.5px solid ${C.accent}`, borderRadius:"50%", animation:"spin 0.7s linear infinite" }}/>
+    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0" }}>
+      <div style={{ width:11, height:11, border:`2px solid ${C.border2}`, borderTop:`2px solid ${C.accent}`, borderRadius:"50%", animation:"spin 0.7s linear infinite" }}/>
       <span style={{ ...mono, fontSize:9, color:C.muted }}>Synthesizing…</span>
     </div>
   );
 }
 
 // ─── PANEL 1: MACRO WAR ROOM ──────────────────────────────────────────────────
-function MacroPanel({ macro, news, loading, onRefresh, lastUpdated }) {
-  const pressureColor = (v) => {
-    if (!v) return C.muted;
-    if (v === "UPSIDE") return C.green;
-    if (v === "DOWNSIDE") return C.red;
-    return C.gold;
-  };
-  const toneColor = (v) => {
-    if (!v) return C.muted;
-    const up = /dovish|cooling|soft|resilient|risk.on|upside/i.test(v);
-    const down = /hawkish|hot|weak|slowing|risk.off|downside/i.test(v);
-    return up ? C.green : down ? C.red : C.gold;
-  };
+function MacroPanel({ macro, news, loading, onRefresh, lastUpdated, isBaseline, savedAt }) {
+  const sourceLabel = isBaseline
+    ? (savedAt ? `Last session · ${timeAgoLabel(savedAt)}` : "Baseline context — no live data")
+    : lastUpdated
+      ? `Live · updated ${lastUpdated.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}`
+      : "Fetching…";
+
+  const sourceColor = isBaseline ? C.gold : C.green;
 
   return (
-    <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:6,
-      display:"flex", flexDirection:"column" }}>
-      <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
-        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <span style={{ ...mono, fontSize:9, letterSpacing:"0.2em", color:C.accent, fontWeight:700 }}>
-          MACRO WAR ROOM
-        </span>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          {lastUpdated && (
-            <span style={{ ...mono, fontSize:8, color:C.muted }}>
-              {lastUpdated.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}
-            </span>
-          )}
-          <button onClick={onRefresh} disabled={loading}
-            style={{ ...mono, fontSize:8, color:loading?C.muted:C.accent, background:"none",
-              border:`1px solid ${loading?C.border:C.accent}40`, borderRadius:3,
-              padding:"3px 8px", cursor:loading?"not-allowed":"pointer" }}>
-            {loading ? "…" : "↻"}
-          </button>
-        </div>
-      </div>
+    <Panel>
+      <PanelHead
+        title="MACRO WAR ROOM"
+        sub={sourceLabel}
+        right={
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:sourceColor, animation:"pulse 2s infinite" }}/>
+            <button onClick={onRefresh} disabled={loading}
+              style={{ ...mono, fontSize:9, color:loading?C.muted:C.accent, background:`${C.accent}12`, border:`1px solid ${C.accent}35`, borderRadius:6, padding:"5px 12px", cursor:loading?"not-allowed":"pointer" }}>
+              {loading ? "…" : "↻ Refresh"}
+            </button>
+          </div>
+        }
+      />
 
-      <div style={{ padding:"4px 18px 6px" }}>
+      <div style={{ padding:"4px 20px 8px" }}>
         {loading && !macro ? <Spinner/> : <>
-          <Row label="Fed Tone" value={macro?.fed_tone} color={toneColor(macro?.fed_tone)}/>
-          <Row label="Inflation" value={macro?.inflation} color={toneColor(macro?.inflation)}/>
-          <Row label="Jobs" value={macro?.jobs} color={toneColor(macro?.jobs)}/>
-          <Row label="Growth" value={macro?.growth} color={toneColor(macro?.growth)}/>
-          <Row label="Risk Tone" value={macro?.risk_tone} color={toneColor(macro?.risk_tone)}/>
-          <Row label="YM Macro Pressure" value={macro?.ym_pressure} color={pressureColor(macro?.ym_pressure)}/>
-          <Row label="NQ Macro Pressure" value={macro?.nq_pressure} color={pressureColor(macro?.nq_pressure)}/>
+          <MacroField label="Fed Tone" value={macro?.fed_tone}/>
+          <MacroField label="Inflation" value={macro?.inflation}/>
+          <MacroField label="Jobs" value={macro?.jobs}/>
+          <MacroField label="Growth" value={macro?.growth}/>
+          <MacroField label="Risk Tone" value={macro?.risk_tone}/>
+
+          {/* YM / NQ pressure — always visible */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, margin:"14px 0 4px" }}>
+            {[["YM MACRO PRESSURE", macro?.ym_pressure, pressureColor(macro?.ym_pressure)],
+              ["NQ MACRO PRESSURE", macro?.nq_pressure, pressureColor(macro?.nq_pressure)]].map(([lbl,val,col])=>(
+              <div key={lbl} style={{ background:C.card, border:`1px solid ${col}30`, borderRadius:8, padding:"12px 14px" }}>
+                <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.1em", marginBottom:6 }}>{lbl}</div>
+                <div style={{ ...mono, fontSize:15, fontWeight:800, color:col }}>{val || "NEUTRAL"}</div>
+              </div>
+            ))}
+          </div>
         </>}
       </div>
 
-      <div style={{ height:1, background:C.border, margin:"8px 18px" }}/>
+      <div style={{ height:1, background:C.border }}/>
 
-      <div style={{ padding:"0 18px 14px" }}>
-        <FieldLabel>NEWS CLASSIFICATION</FieldLabel>
+      <div style={{ padding:"14px 20px 16px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <div style={{ ...mono, fontSize:9, color:C.text, letterSpacing:"0.15em" }}>NEWS CLASSIFICATION</div>
+          {isBaseline && (
+            <span style={{ ...mono, fontSize:8, color:C.gold, background:`${C.gold}14`, border:`1px solid ${C.gold}30`, padding:"2px 8px", borderRadius:4 }}>
+              LAST SESSION
+            </span>
+          )}
+        </div>
         {loading && !news.length ? <Spinner/> : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10, marginTop:8 }}>
-            {news.map((item, i) => {
-              const meta = EFFECT_META[item.effect] || EFFECT_META.COMPANY;
-              const impactCol = item.impact==="HIGH" ? C.red : item.impact==="MED" ? C.gold : C.muted;
-              return (
-                <div key={i} style={{ borderLeft:`2px solid ${meta.color}`, paddingLeft:10 }}>
-                  <div style={{ display:"flex", gap:5, marginBottom:4 }}>
-                    <Tag text={meta.label} color={meta.color}/>
-                    <Tag text={item.impact} color={impactCol}/>
-                  </div>
-                  <div style={{ color:C.bright, fontSize:10, lineHeight:1.5, marginBottom:3 }}>
-                    {item.headline}
-                  </div>
-                  <div style={{ color:C.text, fontSize:9, lineHeight:1.5 }}>
-                    <span style={{ color:meta.color }}>▸ </span>{item.implication}
-                  </div>
-                </div>
-              );
-            })}
-            {!loading && !news.length && (
-              <div style={{ color:C.muted, fontSize:10, ...mono }}>No headlines loaded.</div>
-            )}
-          </div>
+          news.map((item,i) => <NewsCard key={i} item={item}/>)
         )}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -204,393 +263,328 @@ function MacroPanel({ macro, news, loading, onRefresh, lastUpdated }) {
 function ContextPanel({ events, calLoading }) {
   const activeId = getWindowId();
   const session = getSession();
-  const sessionColor = session === "NEW YORK" ? C.accent : session === "LONDON" ? C.gold : C.muted;
 
   return (
-    <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:6,
-      display:"flex", flexDirection:"column" }}>
-      <PanelHeader label="SESSION CONTEXT" sub="time + environment"/>
+    <Panel>
+      <PanelHead title="SESSION CONTEXT" sub="Time + Environment"/>
+      <div style={{ padding:"16px 20px" }}>
 
-      <div style={{ padding:"12px 18px", flex:1 }}>
-
-        {/* Session */}
-        <div style={{ marginBottom:16 }}>
-          <FieldLabel>Active Session</FieldLabel>
-          <div style={{ color:sessionColor, fontSize:13, fontWeight:700, ...mono }}>{session}</div>
+        {/* Session badge */}
+        <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:10, padding:"14px 16px", marginBottom:14, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.14em", marginBottom:4 }}>ACTIVE SESSION</div>
+            <div style={{ ...display, fontSize:18, fontWeight:800, color:session.color }}>{session.label}</div>
+          </div>
+          <div style={{ width:10, height:10, borderRadius:"50%", background:session.color, animation:"pulse 2s infinite" }}/>
         </div>
 
         {/* Time windows */}
-        <div style={{ marginBottom:16 }}>
-          <FieldLabel>NY Time Windows</FieldLabel>
-          <div style={{ display:"flex", flexDirection:"column", gap:4, marginTop:6 }}>
-            {WINDOWS.map(w => {
-              const active = w.id === activeId;
-              return (
-                <div key={w.id} style={{
-                  display:"flex", justifyContent:"space-between", alignItems:"center",
-                  padding:"7px 10px", borderRadius:4,
-                  background: active ? `${C.accent}12` : "transparent",
-                  border: active ? `1px solid ${C.accent}35` : `1px solid transparent`,
-                }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <div style={{ width:5, height:5, borderRadius:"50%", flexShrink:0,
-                      background: active ? C.accent : C.border,
-                      animation: active ? "pulse 2s infinite" : "none" }}/>
-                    <span style={{ ...mono, fontSize:9,
-                      color: active ? C.accent : C.muted,
-                      fontWeight: active ? 700 : 400 }}>
-                      {w.label}
-                    </span>
-                  </div>
-                  <span style={{ ...mono, fontSize:8, color:C.muted }}>{w.time}</span>
+        <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.14em", marginBottom:10 }}>NY TIME WINDOWS</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:16 }}>
+          {WINDOWS.map(w => {
+            const active = w.id === activeId;
+            return (
+              <div key={w.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 12px", borderRadius:8, background:active?`${C.accent}10`:"transparent", border:active?`1px solid ${C.accent}30`:`1px solid transparent` }}>
+                <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                  <div style={{ width:6, height:6, borderRadius:"50%", background:active?C.accent:C.muted, flexShrink:0, animation:active?"pulse 2s infinite":"none" }}/>
+                  <span style={{ ...mono, fontSize:9, color:active?C.accent:C.muted, fontWeight:active?700:400, letterSpacing:"0.08em" }}>{w.label}</span>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ height:1, background:C.border, margin:"4px 0 14px" }}/>
-
-        {/* Market environment — static behavioral labels, no structure */}
-        <div style={{ marginBottom:16 }}>
-          <FieldLabel>Market Environment</FieldLabel>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
-            {[
-              ["Volatility", "NORMAL", C.green],
-              ["Market Behavior","EXPANDING", C.green],
-            ].map(([lbl, val, col]) => (
-              <div key={lbl} style={{ background:C.dim, borderRadius:4, padding:"9px 10px" }}>
-                <FieldLabel>{lbl}</FieldLabel>
-                <div style={{ color:col, fontSize:11, fontWeight:700, ...mono }}>{val}</div>
+                <span style={{ ...mono, fontSize:8, color:C.muted }}>{w.time}</span>
               </div>
-            ))}
+            );
+          })}
+        </div>
+
+        <div style={{ height:1, background:C.border, marginBottom:16 }}/>
+
+        {/* Environment */}
+        <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.14em", marginBottom:10 }}>MARKET ENVIRONMENT</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
+          {[["VOLATILITY","NORMAL",C.green],["MARKET BEHAVIOR","EXPANDING",C.green]].map(([lbl,val,col])=>(
+            <div key={lbl} style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:8, padding:"12px 14px" }}>
+              <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.1em", marginBottom:6 }}>{lbl}</div>
+              <div style={{ ...mono, fontSize:11, fontWeight:700, color:col }}>{val}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ height:1, background:C.border, marginBottom:16 }}/>
+
+        {/* Events */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+          <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.14em" }}>UPCOMING EVENTS</div>
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:calLoading?C.gold:C.green, animation:"pulse 2s infinite" }}/>
+            <span style={{ ...mono, fontSize:8, color:calLoading?C.gold:C.green }}>{calLoading?"LOADING":"LIVE"}</span>
           </div>
         </div>
 
-        <div style={{ height:1, background:C.border, margin:"4px 0 14px" }}/>
-
-        {/* Upcoming events — live from FF */}
-        <div>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-            <FieldLabel>Upcoming Events</FieldLabel>
-            <div style={{ display:"flex", gap:5, alignItems:"center" }}>
-              <div style={{ width:5, height:5, borderRadius:"50%",
-                background: calLoading ? C.gold : C.green,
-                animation:"pulse 2s infinite" }}/>
-              <span style={{ ...mono, fontSize:8, color: calLoading ? C.gold : C.green }}>
-                {calLoading ? "LOADING" : "LIVE"}
-              </span>
-            </div>
-          </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-            {calLoading && !events.length && <Spinner/>}
-            {events.map((ev, i) => {
-              const impactCol = ev.impact==="HIGH" ? C.red : ev.impact==="MED" ? C.gold : C.muted;
+        {calLoading && !events.length ? <Spinner/> : events.length ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {events.map((ev,i) => {
+              const ic = ev.impact==="HIGH"?C.red:ev.impact==="MED"?C.gold:C.muted;
               return (
-                <div key={i} style={{ display:"flex", alignItems:"center", gap:10,
-                  padding:"7px 10px", borderRadius:4,
-                  background: ev.impact==="HIGH" ? `${C.red}08` : "transparent",
-                  border: ev.impact==="HIGH" ? `1px solid ${C.red}20` : `1px solid ${C.border}30` }}>
-                  <div style={{ width:5, height:5, borderRadius:"50%", background:impactCol, flexShrink:0 }}/>
-                  <span style={{ ...mono, fontSize:9, color:C.accent, minWidth:40 }}>{ev.time}</span>
-                  <span style={{ color:C.text, fontSize:10, flex:1 }}>{ev.event}</span>
-                  <Tag text={ev.impact} color={impactCol}/>
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:8, background:ev.impact==="HIGH"?`${C.red}08`:C.card, border:`1px solid ${ev.impact==="HIGH"?C.red+"25":C.border2}` }}>
+                  <div style={{ width:6, height:6, borderRadius:"50%", background:ic, flexShrink:0 }}/>
+                  <span style={{ ...mono, fontSize:9, color:C.accent, minWidth:38 }}>{ev.time}</span>
+                  <span style={{ color:C.bright, fontSize:10, flex:1, lineHeight:1.4 }}>{ev.event}</span>
+                  <span style={{ ...mono, fontSize:8, fontWeight:700, padding:"2px 6px", borderRadius:3, background:`${ic}18`, color:ic }}>{ev.impact}</span>
                 </div>
               );
             })}
-            {!calLoading && !events.length && (
-              <div style={{ color:C.muted, fontSize:10, ...mono }}>No events found.</div>
-            )}
           </div>
-        </div>
+        ) : (
+          <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:8, padding:"12px 14px" }}>
+            <div style={{ ...mono, fontSize:9, color:C.muted }}>No scheduled events — market closed or weekend</div>
+          </div>
+        )}
       </div>
-    </div>
+    </Panel>
   );
 }
 
 // ─── PANEL 3: EXECUTION ASSISTANT ────────────────────────────────────────────
 function ExecutionPanel({ macro, events }) {
-  // Derive checklist from live data — context only, no decisions
   const highImpactSoon = events.some(e => {
-    if (e.impact !== "HIGH") return false;
-    const [h, m] = (e.time || "").split(":").map(Number);
+    if (e.impact!=="HIGH") return false;
+    const [h,m] = (e.time||"").split(":").map(Number);
     if (isNaN(h)) return false;
-    const evMins = h * 60 + m;
-    const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
-    return evMins - nowMins >= 0 && evMins - nowMins <= 30;
+    const diff = (h*60+m) - (new Date().getHours()*60+new Date().getMinutes());
+    return diff>=0 && diff<=30;
   });
 
   const checklist = [
-    { label:"Macro context aligned", status: macro ? (macro.risk_tone || "").toUpperCase().includes("RISK-ON") : null },
+    { label:"Macro context aligned", status: macro ? /risk.on/i.test(macro.risk_tone||"") : null },
     { label:"In key time window", status: isInKeyWindow() },
-    { label:"High-impact event within 30 min", status: highImpactSoon, invert: true },
+    { label:"High-impact event within 30 min", status: highImpactSoon, invert:true },
     { label:"Volatility context normal", status: true },
   ];
 
-  const passed = checklist.filter(c => c.status === true && !c.invert).length
-                  + checklist.filter(c => c.status === false && c.invert).length;
+  const passed = checklist.filter(c => c.invert ? c.status===false : c.status===true).length;
   const notPassed = checklist.length - passed;
-
-  const statusKey = passed === 4 ? "FAVORABLE" : passed >= 2 ? "MIXED" : "UNFAVORABLE";
+  const statusKey = passed===4?"FAVORABLE":passed>=2?"MIXED":"UNFAVORABLE";
   const sm = STATUS_META[statusKey];
 
   return (
-    <div style={{ background:C.panel, border:`1px solid ${C.border}`, borderRadius:6,
-      display:"flex", flexDirection:"column" }}>
-      <PanelHeader label="EXECUTION ASSISTANT" sub="context checklist"/>
+    <Panel>
+      <PanelHead title="EXECUTION ASSISTANT" sub="Context Checklist"/>
+      <div style={{ padding:"16px 20px", flex:1 }}>
 
-      <div style={{ padding:"12px 18px", flex:1 }}>
-        <div style={{ marginBottom:18 }}>
-          <FieldLabel>Pre-Execution Context</FieldLabel>
-          <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:10 }}>
-            {checklist.map((item, i) => {
-              const isPositive = item.invert ? item.status === false : item.status === true;
-              const isNull = item.status === null;
-              const col = isNull ? C.muted : isPositive ? C.green : C.red;
-              const val = isNull ? "—" : isPositive ? "YES" : "NO";
-              return (
-                <div key={i} style={{
-                  display:"flex", justifyContent:"space-between", alignItems:"center",
-                  padding:"10px 12px", borderRadius:4,
-                  background: isNull ? `${C.muted}08` : isPositive ? `${C.green}08` : `${C.red}08`,
-                  border:`1px solid ${col}25`,
-                }}>
-                  <span style={{ color:C.text, fontSize:11 }}>{item.label}</span>
-                  <span style={{ ...mono, fontSize:10, fontWeight:700, color:col }}>{val}</span>
-                </div>
-              );
-            })}
-          </div>
+        <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.14em", marginBottom:12 }}>PRE-EXECUTION CONTEXT</div>
 
-          {/* Descriptive summary — no score */}
-          <div style={{ marginTop:10, padding:"8px 10px", background:C.dim, borderRadius:4 }}>
-            <span style={{ ...mono, fontSize:9, color:C.text }}>
-              {passed} condition{passed!==1?"s":""} aligned, {notPassed} not aligned
-            </span>
-          </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
+          {checklist.map((item,i) => {
+            const isPos = item.invert ? item.status===false : item.status===true;
+            const isNull = item.status===null;
+            const col = isNull?C.muted:isPos?C.green:C.red;
+            const val = isNull?"—":isPos?"YES":"NO";
+            return (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 14px", borderRadius:10, background:isNull?C.card:isPos?`${C.green}08`:`${C.red}08`, border:`1px solid ${isNull?C.border2:col+"30"}` }}>
+                <span style={{ color:C.bright, fontSize:11, lineHeight:1.4 }}>{item.label}</span>
+                <span style={{ ...mono, fontSize:11, fontWeight:800, color:col, minWidth:24, textAlign:"right" }}>{val}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:8, padding:"10px 14px", marginBottom:16 }}>
+          <span style={{ ...mono, fontSize:9, color:C.text }}>
+            {passed} condition{passed!==1?"s":""} aligned · {notPassed} not aligned
+          </span>
         </div>
 
         <div style={{ height:1, background:C.border, marginBottom:16 }}/>
 
-        {/* Role note */}
-        <div style={{ background:C.dim, borderRadius:4, padding:"10px 12px", marginBottom:16,
-          borderLeft:`2px solid ${C.muted}` }}>
-          <div style={{ ...mono, fontSize:8, color:C.muted, marginBottom:4 }}>NOTE</div>
-          <div style={{ color:C.text, fontSize:10, lineHeight:1.6 }}>
+        <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:10, padding:"12px 14px", marginBottom:16, borderLeft:`3px solid ${C.muted}` }}>
+          <div style={{ ...mono, fontSize:8, color:C.muted, letterSpacing:"0.12em", marginBottom:5 }}>NOTE</div>
+          <div style={{ color:C.text, fontSize:10, lineHeight:1.7 }}>
             This checklist reflects context only. You determine structure, entry, and execution.
           </div>
         </div>
 
-        {/* Context Condition */}
-        <div style={{ background:`${sm.color}10`, border:`1px solid ${sm.color}35`,
-          borderRadius:4, padding:"16px 14px" }}>
-          <div style={{ ...mono, fontSize:8, color:C.muted, letterSpacing:"0.18em", marginBottom:8 }}>
-            CONTEXT CONDITION
+        <div style={{ background:`${sm.color}0c`, border:`1px solid ${sm.color}30`, borderRadius:12, padding:"18px 16px" }}>
+          <div style={{ ...mono, fontSize:8, color:C.text, letterSpacing:"0.16em", marginBottom:10 }}>CONTEXT CONDITION</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
+            <span style={{ ...mono, fontSize:10, color:C.text }}>Context Condition:</span>
+            <span style={{ ...display, fontSize:22, fontWeight:900, color:sm.color, letterSpacing:"0.04em" }}>{sm.label}</span>
           </div>
-          <div style={{ fontSize:13, fontWeight:700, color:C.muted, ...mono, marginBottom:4 }}>
-            Context Condition:
-          </div>
-          <div style={{ fontSize:20, fontWeight:900, color:sm.color,
-            fontFamily:"'Barlow Condensed', sans-serif", letterSpacing:"0.06em", marginBottom:10 }}>
-            {sm.label}
-          </div>
-          <div style={{ ...mono, fontSize:9, color:C.text, lineHeight:1.7 }}>
-            {sm.desc}
-          </div>
+          <div style={{ color:C.text, fontSize:10, lineHeight:1.7 }}>{sm.desc}</div>
         </div>
       </div>
-    </div>
+    </Panel>
   );
 }
 
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+// ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [time, setTime] = useState(new Date());
-  const [rawNews, setRawNews] = useState([]);
   const [events, setEvents] = useState([]);
   const [macro, setMacro] = useState(null);
   const [news, setNews] = useState([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [calLoading, setCalLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [isBaseline, setIsBaseline] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
 
-  // ── Clock ──────────────────────────────────────────────────────────────────
+  useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return()=>clearInterval(t); },[]);
+
+  // Load saved or baseline data immediately on mount — never blank
   useEffect(()=>{
-    const t = setInterval(()=>setTime(new Date()), 1000);
-    return ()=>clearInterval(t);
-  }, []);
+    const saved = loadFromStorage();
+    if (saved?.macro) {
+      setMacro(saved.macro);
+      setNews(saved.news || BASELINE.news);
+      setSavedAt(saved.savedAt);
+      setIsBaseline(true);
+    } else {
+      setMacro(BASELINE.macro);
+      setNews(BASELINE.news);
+      setIsBaseline(true);
+    }
+  },[]);
 
-  // ── Fetch FF calendar ──────────────────────────────────────────────────────
-  const fetchCalendar = useCallback(async () => {
+  const fetchCalendar = useCallback(async()=>{
     setCalLoading(true);
     try {
       const res = await fetch(FF_CALENDAR);
       const d = await res.json();
       const parser = new DOMParser();
-      const doc = parser.parseFromString(d.contents, "text/xml");
-      const all = [...doc.querySelectorAll("event")].map(ev => {
-        const raw = (ev.querySelector("impact")?.textContent || "").trim();
-        const impact = /high|red/i.test(raw) ? "HIGH" : /med|orange/i.test(raw) ? "MED" : "LOW";
-        return {
-          time: ev.querySelector("time")?.textContent || "—",
-          ccy: ev.querySelector("country")?.textContent || "",
-          event: ev.querySelector("title")?.textContent || "",
-          forecast: ev.querySelector("forecast")?.textContent || "—",
-          impact,
-        };
-      }).filter(e => e.event && e.ccy === "USD");
-      setEvents(all.slice(0, 8));
+      const doc = parser.parseFromString(d.contents,"text/xml");
+      const all = [...doc.querySelectorAll("event")].map(ev=>{
+        const raw = (ev.querySelector("impact")?.textContent||"").trim();
+        const impact = /high|red/i.test(raw)?"HIGH":/med|orange/i.test(raw)?"MED":"LOW";
+        return { time:ev.querySelector("time")?.textContent||"—", ccy:ev.querySelector("country")?.textContent||"", event:ev.querySelector("title")?.textContent||"", impact };
+      }).filter(e=>e.event&&e.ccy==="USD");
+      setEvents(all.slice(0,8));
     } catch {}
     setCalLoading(false);
-  }, []);
+  },[]);
 
-  // ── Fetch FF news + run AI synthesis ──────────────────────────────────────
-  const fetchAndSynthesize = useCallback(async () => {
+  const fetchAndSynthesize = useCallback(async()=>{
     setAiLoading(true);
-    let headlines = [];
+    let headlines=[];
     try {
       const res = await fetch(FF_NEWS);
       const d = await res.json();
       const parser = new DOMParser();
-      const doc = parser.parseFromString(d.contents, "text/xml");
-      headlines = [...doc.querySelectorAll("item")]
-        .map(el => el.querySelector("title")?.textContent || "")
-        .filter(Boolean)
-        .slice(0, 15);
-      setRawNews(headlines);
+      const doc = parser.parseFromString(d.contents,"text/xml");
+      headlines = [...doc.querySelectorAll("item")].map(el=>el.querySelector("title")?.textContent||"").filter(Boolean).slice(0,15);
     } catch {}
 
-    if (!headlines.length) { setAiLoading(false); return; }
+    if (!headlines.length) {
+      // No live news — keep showing whatever is already displayed (saved or baseline)
+      setAiLoading(false);
+      return;
+    }
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: `You are a macro context assistant for a futures trader who trades NQ and YM.
-Your job is to read headlines and output a structured JSON context summary.
-
-Respond ONLY with valid JSON — no markdown, no extra text:
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:1000,
+          system:`You are a macro context assistant for a futures trader who trades NQ and YM.
+Respond ONLY with valid JSON — no markdown:
 {
   "macro": {
-    "fed_tone": "one of: DOVISH / DOVISH LEAN / NEUTRAL / HAWKISH LEAN / HAWKISH",
-    "inflation": "one of: COOLING / STABLE / ELEVATED / HOT",
-    "jobs": "one of: WEAK / SOFTENING / RESILIENT / STRONG",
-    "growth": "one of: CONTRACTING / SLOWING / STABLE / EXPANDING",
-    "risk_tone": "one of: RISK-OFF / MIXED / RISK-ON",
-    "ym_pressure": "one of: DOWNSIDE / NEUTRAL / UPSIDE",
-    "nq_pressure": "one of: DOWNSIDE / NEUTRAL / UPSIDE"
+    "fed_tone": "DOVISH / DOVISH LEAN / NEUTRAL / HAWKISH LEAN / HAWKISH",
+    "inflation": "COOLING / STABLE / ELEVATED / HOT",
+    "jobs": "WEAK / SOFTENING / RESILIENT / STRONG",
+    "growth": "CONTRACTING / SLOWING / STABLE / EXPANDING",
+    "risk_tone": "RISK-OFF / MIXED / RISK-ON",
+    "ym_pressure": "DOWNSIDE / NEUTRAL / UPSIDE",
+    "nq_pressure": "DOWNSIDE / NEUTRAL / UPSIDE"
   },
   "news": [
-    {
-      "headline": "shortened headline under 12 words",
-      "effect": "MARKET or INDUSTRY or COMPANY",
-      "impact": "HIGH or MED or LOW",
-      "implication": "one sentence — what it means for NQ or YM context only"
-    }
+    { "headline": "under 12 words", "effect": "MARKET or INDUSTRY or COMPANY", "impact": "HIGH or MED or LOW", "implication": "one sentence for NQ/YM context" }
   ]
 }
-
-Rules:
-- news array: include only the 5 most relevant headlines for a futures NQ/YM trader
-- effect: MARKET = broad index impact, INDUSTRY = sector impact, COMPANY = single stock
-- Do NOT make trading decisions or generate signals
-- Keep implications factual and context-focused`,
-          messages: [{
-            role: "user",
-            content: `Today's headlines:\n${headlines.map((h,i)=>`${i+1}. ${h}`).join("\n")}`
-          }]
+Include only 5 most relevant news items. Do NOT make trading decisions.`,
+          messages:[{role:"user",content:`Headlines:\n${headlines.map((h,i)=>`${i+1}. ${h}`).join("\n")}`}]
         })
       });
       const data = await res.json();
-      const text = data.content?.map(b => b.text || "").join("") || "{}";
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      if (parsed.macro) setMacro(parsed.macro);
-      if (parsed.news) setNews(parsed.news);
-      setLastUpdated(new Date());
+      const text = data.content?.map(b=>b.text||"").join("")||"{}";
+      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+      if (parsed.macro && parsed.news) {
+        setMacro(parsed.macro);
+        setNews(parsed.news);
+        setIsBaseline(false);
+        setLastUpdated(new Date());
+        setSavedAt(new Date().toISOString());
+        saveToStorage(parsed.macro, parsed.news);
+      }
     } catch {}
     setAiLoading(false);
-  }, []);
+  },[]);
 
-  // ── Boot ───────────────────────────────────────────────────────────────────
-  useEffect(() => {
+  useEffect(()=>{
     fetchCalendar();
     fetchAndSynthesize();
-    const newsTimer = setInterval(fetchAndSynthesize, 5 * 60 * 1000); // every 5 min
-    const calTimer = setInterval(fetchCalendar, 10 * 60 * 1000); // every 10 min
-    return () => { clearInterval(newsTimer); clearInterval(calTimer); };
-  }, []);
+    const t1=setInterval(fetchAndSynthesize,5*60*1000);
+    const t2=setInterval(fetchCalendar,10*60*1000);
+    return()=>{clearInterval(t1);clearInterval(t2);};
+  },[]);
 
-  const timeStr = time.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:true });
-  const dateStr = time.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
+  const timeStr = time.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true});
+  const dateStr = time.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
   const session = getSession();
-  const sessionColor = session === "NEW YORK" ? C.accent : session === "LONDON" ? C.gold : C.muted;
 
   return (
-    <div style={{ background:C.bg, minHeight:"100vh", color:C.text, fontFamily:"'Barlow', sans-serif" }}>
+    <div style={{ background:C.bg, minHeight:"100vh", color:C.text, fontFamily:"'Syne', sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Barlow:wght@400;600;700;800;900&family=Barlow+Condensed:wght@700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
         @keyframes spin { to{transform:rotate(360deg)} }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         * { box-sizing:border-box; margin:0; padding:0; }
-        ::-webkit-scrollbar { width:2px } ::-webkit-scrollbar-thumb { background:#0e1f35 }
+        ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-thumb{background:#141d35;border-radius:2px}
+        .main-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; padding:20px 24px; max-width:1280px; margin:0 auto; animation:fadeUp 0.4s ease; }
+        .footer-row { padding:0 24px 18px; max-width:1280px; margin:0 auto; display:flex; justify-content:space-between; }
+        .header-inner { padding:14px 24px; }
+        @media (max-width:768px) {
+          .main-grid { grid-template-columns:1fr !important; padding:12px 14px !important; gap:12px !important; }
+          .footer-row { padding:0 14px 16px; flex-direction:column; gap:6px; }
+          .header-inner { padding:10px 14px; }
+        }
       `}</style>
 
       {/* Header */}
-      <div style={{ background:C.dim, borderBottom:`1px solid ${C.border}`, padding:"11px 24px",
-        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ width:30, height:30, background:`${C.accent}14`, border:`1px solid ${C.accent}35`,
-            borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <span style={{ color:C.accent, fontSize:11, fontWeight:900, ...mono }}>TH</span>
+      <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ width:38, height:38, background:`linear-gradient(135deg,${C.accent}22,${C.accent}40)`, border:`1px solid ${C.accent}50`, borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ ...mono, color:C.accent, fontSize:13, fontWeight:800 }}>TH</span>
           </div>
           <div>
-            <div style={{ color:C.white, fontSize:13, fontWeight:900, letterSpacing:"0.08em",
-              fontFamily:"'Barlow Condensed', sans-serif" }}>
-              TH30 CONTEXT TERMINAL
-            </div>
-            <div style={{ ...mono, fontSize:8, color:C.muted, letterSpacing:"0.14em" }}>
-              LIVE · FF NEWS + AI SYNTHESIS
-            </div>
+            <div style={{ ...display, color:C.white, fontSize:16, fontWeight:800, letterSpacing:"0.04em" }}>TH30 CONTEXT TERMINAL</div>
+            <div style={{ ...mono, fontSize:8, color:C.muted, letterSpacing:"0.16em", marginTop:2 }}>LIVE · FF NEWS + AI SYNTHESIS</div>
           </div>
         </div>
-        <div style={{ display:"flex", gap:20, alignItems:"center" }}>
-          <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:sessionColor, animation:"pulse 2s infinite" }}/>
-            <span style={{ ...mono, fontSize:8, color:sessionColor }}>{session}</span>
+        <div style={{ display:"flex", gap:24, alignItems:"center" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:session.color, animation:"pulse 2s infinite" }}/>
+            <span style={{ ...mono, fontSize:9, color:session.color, letterSpacing:"0.1em" }}>{session.label}</span>
           </div>
           <div style={{ textAlign:"right" }}>
-            <div style={{ ...mono, fontSize:11, color:C.bright }}>{timeStr}</div>
-            <div style={{ ...mono, fontSize:8, color:C.muted }}>{dateStr} · NY</div>
+            <div style={{ ...mono, fontSize:13, color:C.white, letterSpacing:"0.04em" }}>{timeStr}</div>
+            <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:1 }}>{dateStr} · NY</div>
           </div>
         </div>
       </div>
 
       {/* Panels */}
-      <div style={{ padding:"18px 24px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr",
-        gap:14, maxWidth:1200, margin:"0 auto" }}>
+      <div className="main-grid">
         <MacroPanel
-          macro={macro}
-          news={news}
-          loading={aiLoading}
-          onRefresh={fetchAndSynthesize}
-          lastUpdated={lastUpdated}
+          macro={macro} news={news} loading={aiLoading}
+          onRefresh={fetchAndSynthesize} lastUpdated={lastUpdated}
+          isBaseline={isBaseline} savedAt={savedAt}
         />
-        <ContextPanel
-          events={events}
-          calLoading={calLoading}
-        />
-        <ExecutionPanel
-          macro={macro}
-          events={events}
-        />
+        <ContextPanel events={events} calLoading={calLoading}/>
+        <ExecutionPanel macro={macro} events={events}/>
       </div>
 
       {/* Footer */}
-      <div style={{ padding:"0 24px 14px", maxWidth:1200, margin:"0 auto",
-        display:"flex", justifyContent:"space-between" }}>
+      <div className="footer-row">
         <span style={{ ...mono, fontSize:8, color:C.muted }}>TH30 CONTEXT TERMINAL · LIVE</span>
         <span style={{ ...mono, fontSize:8, color:C.muted }}>CONTEXT SUPPORT ONLY — STRUCTURE, ENTRIES + EXECUTION REMAIN WITH THE TRADER</span>
       </div>
