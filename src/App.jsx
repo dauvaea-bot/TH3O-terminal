@@ -757,60 +757,96 @@ export default function App() {
 
   const fetchAndSynthesize = useCallback(async()=>{
     setAiLoading(true);
-    let headlines=[];
+    let headlines = [];
+    let feedItems = [];
+
+    // Step 1: Fetch Finnhub news
     try {
-      const res = await fetch(FINNHUB_MKT_NEWS());
+      const res = await fetch(FINNHUB_MKT_NEWS(), { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         const data = await res.json();
-        const items = (Array.isArray(data) ? data : [])
+        feedItems = (Array.isArray(data) ? data : [])
           .filter(n => n.headline && n.headline.length > 10)
           .slice(0, 25)
           .map(n => ({
             title:   n.headline,
-            pubDate: new Date(n.datetime * 1000).toISOString(),
+            pubDate: new Date((n.datetime||0) * 1000).toISOString(),
             link:    n.url || "",
             source:  n.source || "",
           }));
-        headlines = items.map(i=>i.title).slice(0,15);
-        setRawFeed(items);
+        headlines = feedItems.map(i => i.title).slice(0, 15);
+        if (feedItems.length) setRawFeed(feedItems);
       }
-    } catch {}
+    } catch(e) { console.warn("Finnhub news fetch failed:", e); }
 
+    // Step 2: If no headlines, bail but keep existing data
     if (!headlines.length) {
-      // No live news — keep showing whatever is already displayed (saved or baseline)
       setAiLoading(false);
       return;
     }
 
+    // Step 3: AI synthesis via Anthropic
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:1000,
-          system:`You are a macro context assistant for a futures trader who trades NQ and YM.
-Respond ONLY with valid JSON — no markdown:
+      const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `You are a macro context assistant for a futures trader who trades NQ and YM.
+You MUST respond with ONLY a valid JSON object. No markdown fences, no explanation, no extra text. Just the raw JSON.
 {
   "macro": {
-    "fed_tone": "DOVISH / DOVISH LEAN / NEUTRAL / HAWKISH LEAN / HAWKISH",
-    "inflation": "COOLING / STABLE / ELEVATED / HOT",
-    "jobs": "WEAK / SOFTENING / RESILIENT / STRONG",
-    "growth": "CONTRACTING / SLOWING / STABLE / EXPANDING",
-    "risk_tone": "RISK-OFF / MIXED / RISK-ON",
-    "ym_pressure": "DOWNSIDE / NEUTRAL / UPSIDE",
-    "nq_pressure": "DOWNSIDE / NEUTRAL / UPSIDE"
+    "fed_tone": "one of: DOVISH, DOVISH LEAN, NEUTRAL, HAWKISH LEAN, HAWKISH",
+    "inflation": "one of: COOLING, STABLE, ELEVATED, HOT",
+    "jobs": "one of: WEAK, SOFTENING, RESILIENT, STRONG",
+    "growth": "one of: CONTRACTING, SLOWING, STABLE, EXPANDING",
+    "risk_tone": "one of: RISK-OFF, MIXED, RISK-ON",
+    "ym_pressure": "one of: DOWNSIDE, NEUTRAL, UPSIDE",
+    "nq_pressure": "one of: DOWNSIDE, NEUTRAL, UPSIDE"
   },
   "news": [
-    { "headline": "under 12 words", "effect": "MARKET or INDUSTRY or COMPANY", "impact": "HIGH or MED or LOW", "implication": "one sentence for NQ/YM context" }
+    {
+      "headline": "shortened headline max 12 words",
+      "effect": "MARKET or INDUSTRY or COMPANY",
+      "impact": "HIGH or MED or LOW",
+      "implication": "one sentence about NQ or YM impact"
+    }
   ]
 }
-Include only 5 most relevant news items. Do NOT make trading decisions.`,
-          messages:[{role:"user",content:`Headlines:\n${headlines.map((h,i)=>`${i+1}. ${h}`).join("\n")}`}]
+Pick the 5 most market-moving headlines. No trading decisions. Raw JSON only.`,
+          messages: [{
+            role: "user",
+            content: `Analyze these headlines and return the JSON:
+${headlines.map((h,i) => `${i+1}. ${h}`).join("
+")}`
+          }]
         })
       });
-      const data   = await res.json();
-      const text   = data.content?.map(b=>b.text||"").join("")||"{}";
-      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
-      if (parsed.macro && parsed.news) {
+
+      if (!aiRes.ok) {
+        console.warn("AI call failed with status:", aiRes.status);
+        setAiLoading(false);
+        return;
+      }
+
+      const aiData = await aiRes.json();
+      const rawText = (aiData.content || []).map(b => b.text || "").join("").trim();
+
+      // Strip any markdown fences just in case
+      const cleanText = rawText.replace(/^```json\s*/,"").replace(/\s*```$/,"").trim();
+
+      let parsed;
+      try {
+        parsed = JSON.parse(cleanText);
+      } catch(parseErr) {
+        // Try to extract JSON from the text
+        const match = cleanText.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else { console.warn("Could not parse AI response:", cleanText.slice(0,200)); setAiLoading(false); return; }
+      }
+
+      if (parsed?.macro && parsed?.news) {
         setMacro(parsed.macro);
         setNews(parsed.news);
         setIsBaseline(false);
@@ -818,7 +854,10 @@ Include only 5 most relevant news items. Do NOT make trading decisions.`,
         setSavedAt(new Date().toISOString());
         saveToStorage(parsed.macro, parsed.news);
       }
-    } catch {}
+    } catch(e) {
+      console.warn("AI synthesis error:", e);
+    }
+
     setAiLoading(false);
   },[]);
 
