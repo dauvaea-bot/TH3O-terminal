@@ -1,38 +1,69 @@
 import { useState, useEffect, useCallback } from "react";
 
-const PROXY = "https://api.allorigins.win/get?url=";
-const FF_NEWS = PROXY + encodeURIComponent("https://www.forexfactory.com/rss.php");
-const FF_CALENDAR = PROXY + encodeURIComponent("https://www.forexfactory.com/ffcal_week_this.xml");
-const STORAGE_KEY = "th30_last_known";
+// Multiple proxy fallbacks in case one fails
+const PROXIES = [
+  "https://api.allorigins.win/get?url=",
+  "https://corsproxy.io/?",
+  "https://api.codetabs.com/v1/proxy?quest=",
+];
+
+async function fetchWithFallback(url) {
+  for (const proxy of PROXIES) {
+    try {
+      const proxyUrl = proxy.includes("allorigins") || proxy.includes("codetabs")
+        ? proxy + encodeURIComponent(url)
+        : proxy + encodeURIComponent(url);
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const d = await res.json();
+      const text = d.contents || d.data || d;
+      if (text && typeof text === "string" && text.length > 100) return text;
+    } catch { continue; }
+  }
+  return null;
+}
+
+const FF_NEWS_URL     = "https://www.forexfactory.com/rss.php";
+const FF_CALENDAR_URL = "https://www.forexfactory.com/ffcal_week_this.xml";
+const STORAGE_KEY   = "th30_last_known";
+const FINNHUB_KEY   = "d816kvhr01qler4h78u0d816kvhr01qler4h78ug";
+const FINNHUB_URL   = (sym) => `https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`;
+
+// QQQ = NQ proxy, DIA = YM proxy, GLD = Gold proxy
+const PRICE_SYMBOLS = [
+  { symbol:"QQQ",  label:"NQ",   name:"Nasdaq / NQ",  color:"#00d4ff" },
+  { symbol:"DIA",  label:"YM",   name:"Dow / YM",     color:"#00c87a" },
+  { symbol:"GLD",  label:"GOLD", name:"Gold",         color:"#f0a500" },
+];
 
 // ─── BASELINE DEFAULTS — always shown when no live data ───────────────────────
 const BASELINE = {
   macro: {
-    fed_tone: "NEUTRAL",
-    inflation: "ELEVATED",
-    jobs: "RESILIENT",
-    growth: "SLOWING",
-    risk_tone: "MIXED",
+    fed_tone:    "NEUTRAL",
+    inflation:   "ELEVATED",
+    jobs:        "RESILIENT",
+    growth:      "SLOWING",
+    risk_tone:   "MIXED",
     ym_pressure: "NEUTRAL",
     nq_pressure: "NEUTRAL",
   },
   news: [
     {
-      headline: "No live headlines — showing baseline context",
-      effect: "MARKET",
-      impact: "LOW",
+      headline:    "No live headlines — showing baseline context",
+      effect:      "MARKET",
+      impact:      "LOW",
       implication: "Market closed or no active news flow. Baseline macro read is in effect.",
     },
     {
-      headline: "Fed policy stance: data dependent, no imminent cuts",
-      effect: "MARKET",
-      impact: "MED",
+      headline:    "Fed policy stance: data dependent, no imminent cuts",
+      effect:      "MARKET",
+      impact:      "MED",
       implication: "Rates held steady. NQ sensitive to any forward guidance shift.",
     },
     {
-      headline: "Equity futures maintaining upward structure",
-      effect: "MARKET",
-      impact: "MED",
+      headline:    "Equity futures maintaining upward structure",
+      effect:      "MARKET",
+      impact:      "MED",
       implication: "NQ leading. YM lagging. Macro pressure remains upside biased.",
     },
   ],
@@ -40,40 +71,40 @@ const BASELINE = {
 
 // ─── DESIGN ───────────────────────────────────────────────────────────────────
 const C = {
-  bg: "#050810",
+  bg:      "#050810",
   surface: "#0a0e1a",
-  card: "#0d1220",
-  border: "#141d35",
+  card:    "#0d1220",
+  border:  "#141d35",
   border2: "#1a2540",
-  accent: "#00d4ff",
-  green: "#00c87a",
-  red: "#ff3d5a",
-  gold: "#f0a500",
-  muted: "#2e4060",
-  dim: "#1c2a45",
-  text: "#7a9bb5",
-  bright: "#c8dff0",
-  white: "#eaf5ff",
+  accent:  "#00d4ff",
+  green:   "#00c87a",
+  red:     "#ff3d5a",
+  gold:    "#f0a500",
+  muted:   "#2e4060",
+  dim:     "#1c2a45",
+  text:    "#7a9bb5",
+  bright:  "#c8dff0",
+  white:   "#eaf5ff",
 };
 
 const STATUS_META = {
-  FAVORABLE: { color:"#00c87a", label:"FAVORABLE", desc:"Macro, timing, and volatility context are aligned. Structure and execution remain with the trader." },
-  MIXED: { color:"#f0a500", label:"MIXED", desc:"Some context conditions are aligned, others are not. Review each factor individually." },
+  FAVORABLE:   { color:"#00c87a", label:"FAVORABLE",   desc:"Macro, timing, and volatility context are aligned. Structure and execution remain with the trader." },
+  MIXED:       { color:"#f0a500", label:"MIXED",       desc:"Some context conditions are aligned, others are not. Review each factor individually." },
   UNFAVORABLE: { color:"#ff3d5a", label:"UNFAVORABLE", desc:"Context conditions are not aligned. Elevated noise, event risk, or macro conflict is present." },
 };
 
 const EFFECT_META = {
-  MARKET: { color:"#00d4ff", label:"MARKET EFFECT" },
+  MARKET:   { color:"#00d4ff", label:"MARKET EFFECT"   },
   INDUSTRY: { color:"#f0a500", label:"INDUSTRY EFFECT" },
-  COMPANY: { color:"#2e4060", label:"COMPANY EFFECT" },
+  COMPANY:  { color:"#2e4060", label:"COMPANY EFFECT"  },
 };
 
 const WINDOWS = [
-  { id:"pre", label:"PRE-POSITION", time:"8:55–9:25" },
-  { id:"open", label:"OPEN AUCTION", time:"9:30–9:33" },
-  { id:"trap", label:"TRAP CONFIRM", time:"9:33–9:39" },
-  { id:"expand", label:"EXPANSION", time:"9:39–10:00" },
-  { id:"cont", label:"CONTINUATION", time:"10:00+" },
+  { id:"pre",    label:"PRE-POSITION", time:"8:55–9:25"  },
+  { id:"open",   label:"OPEN AUCTION", time:"9:30–9:33"  },
+  { id:"trap",   label:"TRAP CONFIRM", time:"9:33–9:39"  },
+  { id:"expand", label:"EXPANSION",    time:"9:39–10:00" },
+  { id:"cont",   label:"CONTINUATION", time:"10:00+"     },
 ];
 
 function getWindowId() {
@@ -82,15 +113,15 @@ function getWindowId() {
   if (t < 9*60+30) return "pre";
   if (t < 9*60+33) return "open";
   if (t < 9*60+39) return "trap";
-  if (t < 10*60) return "expand";
+  if (t < 10*60)   return "expand";
   return "cont";
 }
 
 function getSession() {
   const h = new Date().getUTCHours();
   if (h >= 13 && h < 22) return { label:"NEW YORK", color:"#00d4ff" };
-  if (h >= 7 && h < 13) return { label:"LONDON", color:"#f0a500" };
-  return { label:"ASIA", color:"#2e4060" };
+  if (h >= 7  && h < 13) return { label:"LONDON",   color:"#f0a500" };
+  return                         { label:"ASIA",     color:"#2e4060" };
 }
 
 function isInKeyWindow() {
@@ -114,13 +145,115 @@ function loadFromStorage() {
 function timeAgoLabel(iso) {
   if (!iso) return null;
   const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 3600)  return `${Math.floor(diff/60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
   return `${Math.floor(diff/86400)}d ago`;
 }
 
+
+// ─── EVENT PLAYBOOK DATA ──────────────────────────────────────────────────────
+const PLAYBOOK_EVENTS = {
+  "CPI":   {
+    label:"CPI Report", icon:"📊",
+    nq: { above:"BEARISH — hot inflation = Fed hawkish risk. NQ sells off.", at:"NEUTRAL — in line = no surprise. NQ ranges.", below:"BULLISH — cooling inflation = rate cut hope. NQ rallies." },
+    ym: { above:"BEARISH — rising rates hurt growth. YM lags NQ on selloff.", at:"NEUTRAL — YM holds range. Watch for institutional rotation.", below:"BULLISH — YM catches bid. Financials + industrials lead." },
+  },
+  "NFP":   {
+    label:"Non-Farm Payrolls", icon:"💼",
+    nq: { above:"MIXED — strong jobs = Fed stays hawkish. Tech under pressure.", at:"NEUTRAL — no catalyst. NQ holds overnight range.", below:"BULLISH — weak jobs = Fed pivot closer. Growth stocks rally." },
+    ym: { above:"BULLISH — strong economy favors Dow industrials and financials.", at:"NEUTRAL — YM stays rangebound. No directional bias.", below:"BEARISH — weak labor = recession fear. YM drops with cyclicals." },
+  },
+  "FOMC":  {
+    label:"FOMC Decision", icon:"🏦",
+    nq: { above:"BEARISH — hike or hawkish surprise crushes NQ. High multiple selloff.", at:"NEUTRAL — hold as expected = relief rally possible. Watch language.", below:"BULLISH — cut or dovish pivot = NQ rips. Tech leads the move." },
+    ym: { above:"BEARISH — rate hike hurts all equities. YM drops with NQ.", at:"NEUTRAL — hold expected = YM stable. Watch Fed statement tone.", below:"BULLISH — dovish Fed = YM rallies. Financials + banks benefit." },
+  },
+  "GDP":   {
+    label:"GDP Report", icon:"📈",
+    nq: { above:"BULLISH — strong growth = earnings optimism. NQ leads rally.", at:"NEUTRAL — in line = no reaction. NQ holds current range.", below:"BEARISH — contraction fear = risk-off. NQ underperforms." },
+    ym: { above:"BULLISH — GDP beat = cyclical strength. YM outperforms NQ.", at:"NEUTRAL — YM holds. No clear directional bias.", below:"BEARISH — weak GDP = recession risk. YM drops on cyclical fear." },
+  },
+  "PCE":   {
+    label:"PCE Inflation", icon:"💰",
+    nq: { above:"BEARISH — Fed's preferred measure hot = hawkish risk. NQ sells.", at:"NEUTRAL — PCE in line = no surprise. NQ rangebound.", below:"BULLISH — PCE cooling = rate cut timing moves closer. NQ bids." },
+    ym: { above:"BEARISH — hot PCE = rates stay high. YM pressured.", at:"NEUTRAL — in line = YM holds. Watch equity breadth.", below:"BULLISH — cooling PCE = risk-on. YM and NQ both rally." },
+  },
+  "ISM":   {
+    label:"ISM Manufacturing", icon:"🏭",
+    nq: { above:"BULLISH — expansion signal. Tech and growth equities rally.", at:"NEUTRAL — borderline. NQ holds range. No strong catalyst.", below:"BEARISH — contraction = recession signal. NQ sells off." },
+    ym: { above:"BULLISH — manufacturing strength = Dow industrials rally hard.", at:"NEUTRAL — YM mixed. Watch internals for rotation.", below:"BEARISH — ISM contraction hits YM harder than NQ." },
+  },
+};
+
+function getPlaybookEvent(events) {
+  const keywords = Object.keys(PLAYBOOK_EVENTS);
+  for (const ev of events) {
+    for (const key of keywords) {
+      if (ev.event.toUpperCase().includes(key)) return { key, event: ev, data: PLAYBOOK_EVENTS[key] };
+    }
+  }
+  return null;
+}
+
+// ─── EVENT PLAYBOOK COMPONENT ─────────────────────────────────────────────────
+function EventPlaybook({ events }) {
+  const [open, setOpen] = useState(false);
+  const match = getPlaybookEvent(events);
+  if (!match) return null;
+
+  const { data, event } = match;
+  const impactCol = event.impact==="HIGH" ? C.red : C.gold;
+
+  const ScenarioRow = ({ dir, label, nq, ym, col }) => (
+    <div style={{ marginBottom:10 }}>
+      <div style={{ ...mono, fontSize:9, color:col, fontWeight:700, letterSpacing:"0.1em", marginBottom:6 }}>
+        {dir} {label}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+        {[["NQ",nq],["YM",ym]].map(([sym,txt])=>(
+          <div key={sym} style={{ background:C.bg, border:`1px solid ${col}25`, borderRadius:6, padding:"8px 10px" }}>
+            <div style={{ ...mono, fontSize:8, color:col, marginBottom:4 }}>{sym}</div>
+            <div style={{ color:C.text, fontSize:9, lineHeight:1.6 }}>{txt}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop:4 }}>
+      <div style={{ height:1, background:C.border, margin:"12px 0" }}/>
+      <button onClick={()=>setOpen(o=>!o)}
+        style={{ width:"100%", display:"flex", justifyContent:"space-between", alignItems:"center", background:`${impactCol}10`, border:`1px solid ${impactCol}30`, borderRadius:8, padding:"10px 14px", cursor:"pointer" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:14 }}>{data.icon}</span>
+          <div style={{ textAlign:"left" }}>
+            <div style={{ ...mono, fontSize:9, color:impactCol, fontWeight:700, letterSpacing:"0.12em" }}>EVENT PLAYBOOK</div>
+            <div style={{ ...mono, fontSize:8, color:C.text, marginTop:2 }}>{data.label} · {event.time}</div>
+          </div>
+        </div>
+        <span style={{ ...mono, fontSize:12, color:impactCol }}>{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:8, padding:"14px", marginTop:8 }}>
+          <div style={{ ...mono, fontSize:8, color:C.muted, letterSpacing:"0.14em", marginBottom:12 }}>
+            NQ + YM SCENARIO BREAKDOWN
+          </div>
+          <ScenarioRow dir="↑ ABOVE" label="forecast" nq={data.nq.above} ym={data.ym.above} col={C.green}/>
+          <ScenarioRow dir="→ ON"    label="forecast" nq={data.nq.at}    ym={data.ym.at}    col={C.gold}/>
+          <ScenarioRow dir="↓ BELOW" label="forecast" nq={data.nq.below} ym={data.ym.below} col={C.red}/>
+          <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:10, lineHeight:1.6, borderTop:`1px solid ${C.border}`, paddingTop:8 }}>
+            Context only. These are historical behavioral tendencies — not trade signals. You determine structure and execution.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
-const mono = { fontFamily:"'JetBrains Mono', 'Fira Code', monospace" };
+const mono    = { fontFamily:"'JetBrains Mono', 'Fira Code', monospace" };
 const display = { fontFamily:"'Syne', sans-serif" };
 
 function toneColor(v) {
@@ -132,7 +265,7 @@ function toneColor(v) {
 
 function pressureColor(v) {
   if (!v) return C.muted;
-  if (v==="UPSIDE") return C.green;
+  if (v==="UPSIDE")   return C.green;
   if (v==="DOWNSIDE") return C.red;
   return C.gold;
 }
@@ -148,7 +281,7 @@ function MacroField({ label, value }) {
 }
 
 function NewsCard({ item }) {
-  const meta = EFFECT_META[item.effect] || EFFECT_META.MARKET;
+  const meta      = EFFECT_META[item.effect] || EFFECT_META.MARKET;
   const impactCol = item.impact==="HIGH" ? C.red : item.impact==="MED" ? C.gold : C.muted;
   return (
     <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:10, padding:"14px 16px", marginBottom:10, borderLeft:`3px solid ${meta.color}` }}>
@@ -194,7 +327,7 @@ function Spinner() {
 }
 
 // ─── PANEL 1: MACRO WAR ROOM ──────────────────────────────────────────────────
-function MacroPanel({ macro, news, loading, onRefresh, lastUpdated, isBaseline, savedAt }) {
+function MacroPanel({ macro, news, loading, onRefresh, lastUpdated, isBaseline, savedAt, events }) {
   const sourceLabel = isBaseline
     ? (savedAt ? `Last session · ${timeAgoLabel(savedAt)}` : "Baseline context — no live data")
     : lastUpdated
@@ -221,10 +354,10 @@ function MacroPanel({ macro, news, loading, onRefresh, lastUpdated, isBaseline, 
 
       <div style={{ padding:"4px 20px 8px" }}>
         {loading && !macro ? <Spinner/> : <>
-          <MacroField label="Fed Tone" value={macro?.fed_tone}/>
+          <MacroField label="Fed Tone"  value={macro?.fed_tone}/>
           <MacroField label="Inflation" value={macro?.inflation}/>
-          <MacroField label="Jobs" value={macro?.jobs}/>
-          <MacroField label="Growth" value={macro?.growth}/>
+          <MacroField label="Jobs"      value={macro?.jobs}/>
+          <MacroField label="Growth"    value={macro?.growth}/>
           <MacroField label="Risk Tone" value={macro?.risk_tone}/>
 
           {/* YM / NQ pressure — always visible */}
@@ -254,6 +387,7 @@ function MacroPanel({ macro, news, loading, onRefresh, lastUpdated, isBaseline, 
         {loading && !news.length ? <Spinner/> : (
           news.map((item,i) => <NewsCard key={i} item={item}/>)
         )}
+        <EventPlaybook events={events}/>
       </div>
     </Panel>
   );
@@ -262,7 +396,7 @@ function MacroPanel({ macro, news, loading, onRefresh, lastUpdated, isBaseline, 
 // ─── PANEL 2: SESSION CONTEXT ─────────────────────────────────────────────────
 function ContextPanel({ events, calLoading }) {
   const activeId = getWindowId();
-  const session = getSession();
+  const session  = getSession();
 
   return (
     <Panel>
@@ -354,16 +488,16 @@ function ExecutionPanel({ macro, events }) {
   });
 
   const checklist = [
-    { label:"Macro context aligned", status: macro ? /risk.on/i.test(macro.risk_tone||"") : null },
-    { label:"In key time window", status: isInKeyWindow() },
+    { label:"Macro context aligned",           status: macro ? /risk.on/i.test(macro.risk_tone||"") : null },
+    { label:"In key time window",              status: isInKeyWindow() },
     { label:"High-impact event within 30 min", status: highImpactSoon, invert:true },
-    { label:"Volatility context normal", status: true },
+    { label:"Volatility context normal",       status: true },
   ];
 
-  const passed = checklist.filter(c => c.invert ? c.status===false : c.status===true).length;
+  const passed    = checklist.filter(c => c.invert ? c.status===false : c.status===true).length;
   const notPassed = checklist.length - passed;
   const statusKey = passed===4?"FAVORABLE":passed>=2?"MIXED":"UNFAVORABLE";
-  const sm = STATUS_META[statusKey];
+  const sm        = STATUS_META[statusKey];
 
   return (
     <Panel>
@@ -374,10 +508,10 @@ function ExecutionPanel({ macro, events }) {
 
         <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
           {checklist.map((item,i) => {
-            const isPos = item.invert ? item.status===false : item.status===true;
+            const isPos  = item.invert ? item.status===false : item.status===true;
             const isNull = item.status===null;
-            const col = isNull?C.muted:isPos?C.green:C.red;
-            const val = isNull?"—":isPos?"YES":"NO";
+            const col    = isNull?C.muted:isPos?C.green:C.red;
+            const val    = isNull?"—":isPos?"YES":"NO";
             return (
               <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 14px", borderRadius:10, background:isNull?C.card:isPos?`${C.green}08`:`${C.red}08`, border:`1px solid ${isNull?C.border2:col+"30"}` }}>
                 <span style={{ color:C.bright, fontSize:11, lineHeight:1.4 }}>{item.label}</span>
@@ -415,17 +549,152 @@ function ExecutionPanel({ macro, events }) {
   );
 }
 
+
+
+// ─── PRICE TICKER ─────────────────────────────────────────────────────────────
+function PriceTicker({ prices, loading }) {
+  return (
+    <div style={{ background:"#060b14", borderBottom:`1px solid ${C.border}`, padding:"0 24px" }}>
+      <div style={{ maxWidth:1280, margin:"0 auto", display:"flex", gap:0 }}>
+        {PRICE_SYMBOLS.map(({ label, name, color }) => {
+          const p = prices[label];
+          const up = p?.changePct >= 0;
+          const col = p ? (up ? C.green : C.red) : C.muted;
+          return (
+            <div key={label} style={{ padding:"8px 20px 8px 0", marginRight:20, borderRight:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12 }}>
+              <div>
+                <div style={{ ...mono, fontSize:8, color:color, letterSpacing:"0.14em", marginBottom:2 }}>{label}</div>
+                <div style={{ ...mono, fontSize:9, color:C.muted }}>{name}</div>
+              </div>
+              {loading && !p ? (
+                <div style={{ ...mono, fontSize:10, color:C.muted }}>—</div>
+              ) : p ? (
+                <div>
+                  <div style={{ ...mono, fontSize:14, fontWeight:800, color:C.white }}>${p.price?.toFixed(2)}</div>
+                  <div style={{ ...mono, fontSize:9, color:col }}>
+                    {up?"+":""}{p.changePct?.toFixed(2)}% ({up?"+":""}{p.change?.toFixed(2)})
+                  </div>
+                </div>
+              ) : (
+                <div style={{ ...mono, fontSize:10, color:C.muted }}>—</div>
+              )}
+            </div>
+          );
+        })}
+        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center" }}>
+          <div style={{ display:"flex", gap:5, alignItems:"center" }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:loading?C.gold:C.green, animation:"pulse 2s infinite" }}/>
+            <span style={{ ...mono, fontSize:8, color:loading?C.gold:C.green }}>
+              {loading ? "LOADING" : "LIVE · 15s"}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── FF LIVE FEED ─────────────────────────────────────────────────────────────
+function FeedItem({ item, index }) {
+  const title = item.title;
+  const isHigh = /fed|fomc|cpi|nfp|gdp|pce|rate|powell|treasury|inflation|jobs|payroll|war|iran|sanction/i.test(title);
+  const isMed  = /oil|gold|nasdaq|dow|equity|stock|earnings|crypto|bitcoin|sector/i.test(title);
+  const impact = isHigh ? "HIGH" : isMed ? "MED" : "LOW";
+  const impactCol = impact==="HIGH" ? C.red : impact==="MED" ? C.gold : C.muted;
+
+  function timeAgo(dateStr) {
+    if (!dateStr) return "";
+    const diff = (Date.now() - new Date(dateStr)) / 1000;
+    if (diff < 60)   return `${Math.floor(diff)}s ago`;
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    return `${Math.floor(diff/3600)}h ago`;
+  }
+
+  return (
+    <div style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 16px", borderBottom:`1px solid ${C.border}25`, background: index%2===0 ? C.card : "transparent" }}>
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, minWidth:36 }}>
+        <div style={{ width:7, height:7, borderRadius:"50%", background:impactCol, flexShrink:0, marginTop:3 }}/>
+        <span style={{ ...mono, fontSize:7, color:impactCol, fontWeight:700, letterSpacing:"0.08em" }}>{impact}</span>
+      </div>
+      <div style={{ flex:1 }}>
+        <div style={{ color:C.bright, fontSize:11, lineHeight:1.55, marginBottom:3 }}>{title}</div>
+        <div style={{ ...mono, fontSize:8, color:C.muted }}>{timeAgo(item.pubDate)}</div>
+      </div>
+    </div>
+  );
+}
+
+function FFLiveFeed({ feed, loading }) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div style={{ maxWidth:1280, margin:"0 auto", padding:"0 24px 24px" }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden" }}>
+
+        {/* Header */}
+        <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={()=>setExpanded(e=>!e)}>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", background: loading ? C.gold : feed.length ? C.green : C.muted, animation:"pulse 2s infinite" }}/>
+            <div>
+              <div style={{ ...mono, fontSize:10, fontWeight:700, letterSpacing:"0.2em", color:C.accent }}>FOREX FACTORY — LIVE FEED</div>
+              <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:2 }}>Raw headlines · auto-refreshes every 5 min</div>
+            </div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <span style={{ ...mono, fontSize:8, color:C.muted }}>{feed.length} headlines</span>
+            <span style={{ ...mono, fontSize:11, color:C.muted }}>{expanded ? "▲" : "▼"}</span>
+          </div>
+        </div>
+
+        {/* Feed */}
+        {expanded && (
+          <div style={{ maxHeight:320, overflowY:"auto" }}>
+            {loading && !feed.length && (
+              <div style={{ padding:"20px 16px", display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ width:11, height:11, border:`2px solid ${C.border2}`, borderTop:`2px solid ${C.accent}`, borderRadius:"50%", animation:"spin 0.7s linear infinite" }}/>
+                <span style={{ ...mono, fontSize:9, color:C.muted }}>Fetching live feed…</span>
+              </div>
+            )}
+            {!loading && !feed.length && (
+              <div style={{ padding:"20px 16px" }}>
+                <span style={{ ...mono, fontSize:10, color:C.muted }}>No live headlines — market may be closed or feed unavailable.</span>
+              </div>
+            )}
+            {feed.map((item, i) => <FeedItem key={i} item={item} index={i}/>)}
+          </div>
+        )}
+
+        {/* Legend */}
+        {expanded && (
+          <div style={{ padding:"10px 20px", borderTop:`1px solid ${C.border}`, display:"flex", gap:16 }}>
+            {[["HIGH", C.red],["MED", C.gold],["LOW", C.muted]].map(([lbl,col])=>(
+              <div key={lbl} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                <div style={{ width:6, height:6, borderRadius:"50%", background:col }}/>
+                <span style={{ ...mono, fontSize:8, color:col }}>{lbl} IMPACT</span>
+              </div>
+            ))}
+            <span style={{ ...mono, fontSize:8, color:C.muted, marginLeft:"auto" }}>Auto-classified by keyword · not AI synthesized</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [time, setTime] = useState(new Date());
-  const [events, setEvents] = useState([]);
-  const [macro, setMacro] = useState(null);
-  const [news, setNews] = useState([]);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [calLoading, setCalLoading] = useState(true);
+  const [time,        setTime]        = useState(new Date());
+  const [prices,      setPrices]      = useState({});
+  const [priceLoading,setPriceLoading]= useState(true);
+  const [events,      setEvents]      = useState([]);
+  const [macro,       setMacro]       = useState(null);
+  const [news,        setNews]        = useState([]);
+  const [rawFeed,     setRawFeed]     = useState([]);
+  const [aiLoading,   setAiLoading]   = useState(false);
+  const [calLoading,  setCalLoading]  = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [isBaseline, setIsBaseline] = useState(false);
-  const [savedAt, setSavedAt] = useState(null);
+  const [isBaseline,  setIsBaseline]  = useState(false);
+  const [savedAt,     setSavedAt]     = useState(null);
 
   useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return()=>clearInterval(t); },[]);
 
@@ -444,19 +713,36 @@ export default function App() {
     }
   },[]);
 
+  const fetchPrices = useCallback(async()=>{
+    try {
+      const results = await Promise.all(
+        PRICE_SYMBOLS.map(async({symbol,label})=>{
+          const res  = await fetch(FINNHUB_URL(symbol));
+          const data = await res.json();
+          return { label, symbol, price:data.c, open:data.o, prevClose:data.pc, change:data.d, changePct:data.dp };
+        })
+      );
+      const map = {};
+      results.forEach(r=>{ map[r.label]=r; });
+      setPrices(map);
+    } catch {}
+    setPriceLoading(false);
+  },[]);
+
   const fetchCalendar = useCallback(async()=>{
     setCalLoading(true);
     try {
-      const res = await fetch(FF_CALENDAR);
-      const d = await res.json();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(d.contents,"text/xml");
-      const all = [...doc.querySelectorAll("event")].map(ev=>{
-        const raw = (ev.querySelector("impact")?.textContent||"").trim();
-        const impact = /high|red/i.test(raw)?"HIGH":/med|orange/i.test(raw)?"MED":"LOW";
-        return { time:ev.querySelector("time")?.textContent||"—", ccy:ev.querySelector("country")?.textContent||"", event:ev.querySelector("title")?.textContent||"", impact };
-      }).filter(e=>e.event&&e.ccy==="USD");
-      setEvents(all.slice(0,8));
+      const text = await fetchWithFallback(FF_CALENDAR_URL);
+      if (text) {
+        const parser = new DOMParser();
+        const doc    = parser.parseFromString(text,"text/xml");
+        const all = [...doc.querySelectorAll("event")].map(ev=>{
+          const raw    = (ev.querySelector("impact")?.textContent||"").trim();
+          const impact = /high|red/i.test(raw)?"HIGH":/med|orange/i.test(raw)?"MED":"LOW";
+          return { time:ev.querySelector("time")?.textContent||"—", ccy:ev.querySelector("country")?.textContent||"", event:ev.querySelector("title")?.textContent||"", impact };
+        }).filter(e=>e.event&&e.ccy==="USD");
+        setEvents(all.slice(0,8));
+      }
     } catch {}
     setCalLoading(false);
   },[]);
@@ -465,11 +751,18 @@ export default function App() {
     setAiLoading(true);
     let headlines=[];
     try {
-      const res = await fetch(FF_NEWS);
-      const d = await res.json();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(d.contents,"text/xml");
-      headlines = [...doc.querySelectorAll("item")].map(el=>el.querySelector("title")?.textContent||"").filter(Boolean).slice(0,15);
+      const text = await fetchWithFallback(FF_NEWS_URL);
+      if (text) {
+        const parser = new DOMParser();
+        const doc    = parser.parseFromString(text,"text/xml");
+        const items  = [...doc.querySelectorAll("item")].map(el=>({
+          title:   el.querySelector("title")?.textContent||"",
+          pubDate: el.querySelector("pubDate")?.textContent||"",
+          link:    el.querySelector("link")?.textContent||"",
+        })).filter(i=>i.title);
+        headlines = items.map(i=>i.title).slice(0,15);
+        setRawFeed(items.slice(0,25));
+      }
     } catch {}
 
     if (!headlines.length) {
@@ -503,8 +796,8 @@ Include only 5 most relevant news items. Do NOT make trading decisions.`,
           messages:[{role:"user",content:`Headlines:\n${headlines.map((h,i)=>`${i+1}. ${h}`).join("\n")}`}]
         })
       });
-      const data = await res.json();
-      const text = data.content?.map(b=>b.text||"").join("")||"{}";
+      const data   = await res.json();
+      const text   = data.content?.map(b=>b.text||"").join("")||"{}";
       const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
       if (parsed.macro && parsed.news) {
         setMacro(parsed.macro);
@@ -521,9 +814,11 @@ Include only 5 most relevant news items. Do NOT make trading decisions.`,
   useEffect(()=>{
     fetchCalendar();
     fetchAndSynthesize();
+    fetchPrices();
     const t1=setInterval(fetchAndSynthesize,5*60*1000);
     const t2=setInterval(fetchCalendar,10*60*1000);
-    return()=>{clearInterval(t1);clearInterval(t2);};
+    const t3=setInterval(fetchPrices,15*1000);
+    return()=>{clearInterval(t1);clearInterval(t2);clearInterval(t3);};
   },[]);
 
   const timeStr = time.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true});
@@ -534,8 +829,8 @@ Include only 5 most relevant news items. Do NOT make trading decisions.`,
     <div style={{ background:C.bg, minHeight:"100vh", color:C.text, fontFamily:"'Syne', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
-        @keyframes spin { to{transform:rotate(360deg)} }
+        @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:0.2} }
+        @keyframes spin   { to{transform:rotate(360deg)} }
         @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         * { box-sizing:border-box; margin:0; padding:0; }
         ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-thumb{background:#141d35;border-radius:2px}
@@ -572,16 +867,22 @@ Include only 5 most relevant news items. Do NOT make trading decisions.`,
         </div>
       </div>
 
+      {/* Price Ticker */}
+      <PriceTicker prices={prices} loading={priceLoading}/>
+
       {/* Panels */}
       <div className="main-grid">
         <MacroPanel
           macro={macro} news={news} loading={aiLoading}
           onRefresh={fetchAndSynthesize} lastUpdated={lastUpdated}
-          isBaseline={isBaseline} savedAt={savedAt}
+          isBaseline={isBaseline} savedAt={savedAt} events={events}
         />
         <ContextPanel events={events} calLoading={calLoading}/>
         <ExecutionPanel macro={macro} events={events}/>
       </div>
+
+      {/* FF Live Feed */}
+      <FFLiveFeed feed={rawFeed} loading={aiLoading}/>
 
       {/* Footer */}
       <div className="footer-row">
