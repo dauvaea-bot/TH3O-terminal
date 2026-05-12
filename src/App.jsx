@@ -1,30 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 
-// Multiple proxy fallbacks in case one fails
-const PROXIES = [
-  "https://api.allorigins.win/get?url=",
-  "https://corsproxy.io/?",
-  "https://api.codetabs.com/v1/proxy?quest=",
-];
+// Finnhub news API — same key as prices, no proxy needed
+const FINNHUB_NEWS_URL = (from, to) =>
+  `https://finnhub.io/api/v1/news?category=general&minId=0&token=${FINNHUB_KEY}`;
+const FINNHUB_MKT_NEWS = () =>
+  `https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`;
+const FINNHUB_CALENDAR_URL = () =>
+  `https://finnhub.io/api/v1/calendar/economic?token=${FINNHUB_KEY}`;
 
-async function fetchWithFallback(url) {
-  for (const proxy of PROXIES) {
-    try {
-      const proxyUrl = proxy.includes("allorigins") || proxy.includes("codetabs")
-        ? proxy + encodeURIComponent(url)
-        : proxy + encodeURIComponent(url);
-      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
-      const d = await res.json();
-      const text = d.contents || d.data || d;
-      if (text && typeof text === "string" && text.length > 100) return text;
-    } catch { continue; }
-  }
-  return null;
-}
-
-const FF_NEWS_URL     = "https://www.forexfactory.com/rss.php";
-const FF_CALENDAR_URL = "https://www.forexfactory.com/ffcal_week_this.xml";
+// Keep FF calendar as fallback via proxy
+const PROXY = "https://api.allorigins.win/get?url=";
+const FF_CALENDAR_URL = PROXY + encodeURIComponent("https://www.forexfactory.com/ffcal_week_this.xml");
 const STORAGE_KEY   = "th30_last_known";
 const FINNHUB_KEY   = "d816kvhr01qler4h78u0d816kvhr01qler4h78ug";
 const FINNHUB_URL   = (sym) => `https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`;
@@ -636,8 +622,8 @@ function FFLiveFeed({ feed, loading }) {
           <div style={{ display:"flex", alignItems:"center", gap:12 }}>
             <div style={{ width:8, height:8, borderRadius:"50%", background: loading ? C.gold : feed.length ? C.green : C.muted, animation:"pulse 2s infinite" }}/>
             <div>
-              <div style={{ ...mono, fontSize:10, fontWeight:700, letterSpacing:"0.2em", color:C.accent }}>FOREX FACTORY — LIVE FEED</div>
-              <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:2 }}>Raw headlines · auto-refreshes every 5 min</div>
+              <div style={{ ...mono, fontSize:10, fontWeight:700, letterSpacing:"0.2em", color:C.accent }}>MARKET NEWS — LIVE FEED</div>
+              <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:2 }}>Finnhub market news · auto-refreshes every 5 min</div>
             </div>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -657,7 +643,7 @@ function FFLiveFeed({ feed, loading }) {
             )}
             {!loading && !feed.length && (
               <div style={{ padding:"20px 16px" }}>
-                <span style={{ ...mono, fontSize:10, color:C.muted }}>No live headlines — market may be closed or feed unavailable.</span>
+                <span style={{ ...mono, fontSize:10, color:C.muted }}>No live headlines — market may be closed or feed loading.</span>
               </div>
             )}
             {feed.map((item, i) => <FeedItem key={i} item={item} index={i}/>)}
@@ -732,16 +718,38 @@ export default function App() {
   const fetchCalendar = useCallback(async()=>{
     setCalLoading(true);
     try {
-      const text = await fetchWithFallback(FF_CALENDAR_URL);
-      if (text) {
-        const parser = new DOMParser();
-        const doc    = parser.parseFromString(text,"text/xml");
-        const all = [...doc.querySelectorAll("event")].map(ev=>{
-          const raw    = (ev.querySelector("impact")?.textContent||"").trim();
-          const impact = /high|red/i.test(raw)?"HIGH":/med|orange/i.test(raw)?"MED":"LOW";
-          return { time:ev.querySelector("time")?.textContent||"—", ccy:ev.querySelector("country")?.textContent||"", event:ev.querySelector("title")?.textContent||"", impact };
-        }).filter(e=>e.event&&e.ccy==="USD");
-        setEvents(all.slice(0,8));
+      // Try Finnhub economic calendar first
+      const res = await fetch(FINNHUB_CALENDAR_URL());
+      if (res.ok) {
+        const data = await res.json();
+        const evts = (data.economicCalendar || [])
+          .filter(e => e.country === "US" && e.event)
+          .map(e => ({
+            time:   e.time ? e.time.slice(11,16) : "—",
+            ccy:    "USD",
+            event:  e.event,
+            impact: e.impact === "high" ? "HIGH" : e.impact === "medium" ? "MED" : "LOW",
+            forecast: e.estimate || "—",
+            prev:     e.prev || "—",
+          }));
+        if (evts.length) { setEvents(evts.slice(0,8)); setCalLoading(false); return; }
+      }
+    } catch {}
+    // Fallback to FF via proxy
+    try {
+      const res2 = await fetch(FF_CALENDAR_URL);
+      if (res2.ok) {
+        const d = await res2.json();
+        if (d.contents) {
+          const parser = new DOMParser();
+          const doc    = parser.parseFromString(d.contents,"text/xml");
+          const all = [...doc.querySelectorAll("event")].map(ev=>{
+            const raw    = (ev.querySelector("impact")?.textContent||"").trim();
+            const impact = /high|red/i.test(raw)?"HIGH":/med|orange/i.test(raw)?"MED":"LOW";
+            return { time:ev.querySelector("time")?.textContent||"—", ccy:ev.querySelector("country")?.textContent||"", event:ev.querySelector("title")?.textContent||"", impact };
+          }).filter(e=>e.event&&e.ccy==="USD");
+          setEvents(all.slice(0,8));
+        }
       }
     } catch {}
     setCalLoading(false);
@@ -751,17 +759,20 @@ export default function App() {
     setAiLoading(true);
     let headlines=[];
     try {
-      const text = await fetchWithFallback(FF_NEWS_URL);
-      if (text) {
-        const parser = new DOMParser();
-        const doc    = parser.parseFromString(text,"text/xml");
-        const items  = [...doc.querySelectorAll("item")].map(el=>({
-          title:   el.querySelector("title")?.textContent||"",
-          pubDate: el.querySelector("pubDate")?.textContent||"",
-          link:    el.querySelector("link")?.textContent||"",
-        })).filter(i=>i.title);
+      const res = await fetch(FINNHUB_MKT_NEWS());
+      if (res.ok) {
+        const data = await res.json();
+        const items = (Array.isArray(data) ? data : [])
+          .filter(n => n.headline && n.headline.length > 10)
+          .slice(0, 25)
+          .map(n => ({
+            title:   n.headline,
+            pubDate: new Date(n.datetime * 1000).toISOString(),
+            link:    n.url || "",
+            source:  n.source || "",
+          }));
         headlines = items.map(i=>i.title).slice(0,15);
-        setRawFeed(items.slice(0,25));
+        setRawFeed(items);
       }
     } catch {}
 
