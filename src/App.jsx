@@ -580,76 +580,6 @@ function PriceTicker({ prices, loading }) {
   );
 }
 
-
-// ─── PRIVATE BRIEFINGS ────────────────────────────────────────────────────────
-function BriefingsPanel({ briefings, loading, onGenerate, lastBrief }) {
-  const inNY = (() => {
-    const t = new Date().getHours()*60+new Date().getMinutes();
-    return t >= 8*60+30 && t <= 17*60;
-  })();
-
-  return (
-    <div style={{ maxWidth:1280, margin:"0 auto", padding:"0 24px 16px" }}>
-      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden" }}>
-
-        {/* Header */}
-        <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:8, height:8, borderRadius:"50%", background:inNY?C.green:C.muted, animation:inNY?"pulse 2s infinite":"none" }}/>
-            <div>
-              <div style={{ ...mono, fontSize:10, fontWeight:700, letterSpacing:"0.2em", color:C.accent }}>PRIVATE BRIEFINGS</div>
-              <div style={{ ...mono, fontSize:8, color:C.muted, marginTop:2 }}>
-                {inNY ? "NY session active · auto-generates every 5 min" : "NY session closed · showing last session briefings"}
-              </div>
-            </div>
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            {lastBrief && <span style={{ ...mono, fontSize:8, color:C.muted }}>{lastBrief.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true})}</span>}
-            <button onClick={onGenerate} disabled={loading}
-              style={{ ...mono, fontSize:9, color:loading?C.muted:C.accent, background:`${C.accent}12`, border:`1px solid ${C.accent}35`, borderRadius:6, padding:"5px 12px", cursor:loading?"not-allowed":"pointer" }}>
-              {loading ? "Generating…" : "↻ Generate"}
-            </button>
-          </div>
-        </div>
-
-        {/* Briefings list */}
-        <div style={{ maxHeight:280, overflowY:"auto" }}>
-          {!briefings.length && !loading && (
-            <div style={{ padding:"24px 20px", display:"flex", alignItems:"center", gap:12 }}>
-              <div style={{ color:C.muted, fontSize:11 }}>
-                {inNY ? "Hit Generate for your first briefing of the session." : "No briefings yet — open during NY session hours (8:30 AM – 5:00 PM ET)."}
-              </div>
-            </div>
-          )}
-          {loading && !briefings.length && (
-            <div style={{ padding:"20px", display:"flex", alignItems:"center", gap:8 }}>
-              <div style={{ width:11, height:11, border:`2px solid ${C.border2}`, borderTop:`2px solid ${C.accent}`, borderRadius:"50%", animation:"spin 0.7s linear infinite" }}/>
-              <span style={{ ...mono, fontSize:9, color:C.muted }}>Generating briefing…</span>
-            </div>
-          )}
-          {briefings.map((b,i)=>(
-            <div key={i} style={{ padding:"14px 20px", borderBottom:`1px solid ${C.border}20`, background:i===0?`${C.accent}05`:"transparent" }}>
-              <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:8 }}>
-                <span style={{ ...mono, fontSize:9, color:C.accent, fontWeight:700 }}>{b.time}</span>
-                <span style={{ ...mono, fontSize:8, color:C.muted }}>—</span>
-                <span style={{ ...mono, fontSize:8, color:b.inSession?C.green:C.muted }}>{b.window}</span>
-                {i===0 && <span style={{ ...mono, fontSize:7, color:C.accent, background:`${C.accent}18`, border:`1px solid ${C.accent}30`, padding:"1px 6px", borderRadius:3 }}>LATEST</span>}
-              </div>
-              <div style={{ color:C.bright, fontSize:12, lineHeight:1.75 }}>{b.text}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Footer note */}
-        <div style={{ padding:"10px 20px", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ ...mono, fontSize:8, color:C.muted }}>Context only · AI-generated · Not a trade signal</span>
-          <span style={{ ...mono, fontSize:8, color:C.muted }}>{briefings.length} briefing{briefings.length!==1?"s":""} this session</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── FF LIVE FEED ─────────────────────────────────────────────────────────────
 function FeedItem({ item, index }) {
   const title = item.title;
@@ -737,13 +667,64 @@ function FFLiveFeed({ feed, loading }) {
   );
 }
 
+
+// ─── OPENING BELL ALERT ───────────────────────────────────────────────────────
+function OpeningBellAlert({ show }) {
+  if (!show) return null;
+  return (
+    <div style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0.85)", animation:"fadeUp 0.3s ease" }}>
+      <div style={{ background:C.surface, border:`2px solid ${C.green}`, borderRadius:16, padding:"40px 60px", textAlign:"center", boxShadow:`0 0 60px ${C.green}40` }}>
+        <div style={{ fontSize:48, marginBottom:16 }}>🔔</div>
+        <div style={{ ...mono, fontSize:11, color:C.green, letterSpacing:"0.3em", marginBottom:10 }}>NYSE OPENING BELL</div>
+        <div style={{ fontFamily:"'Syne',sans-serif", fontSize:28, fontWeight:900, color:C.white, marginBottom:12 }}>Market is Open</div>
+        <div style={{ ...mono, fontSize:10, color:C.muted, lineHeight:1.8 }}>
+          9:30 AM ET · New York Session<br/>
+          The first 30 minutes define the day.<br/>
+          <span style={{ color:C.gold }}>Watch your time windows carefully.</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── COUNTDOWN BANNER ─────────────────────────────────────────────────────────
+function CountdownBanner({ event, currentTime }) {
+  if (!event) return null;
+  const [eh, em] = (event.time||"--:--").split(":").map(Number);
+  if (isNaN(eh)) return null;
+  const nowMins = currentTime.getHours()*60+currentTime.getMinutes();
+  const nowSecs = currentTime.getSeconds();
+  const evtMins = eh*60+em;
+  const diffSecs = (evtMins - nowMins)*60 - nowSecs;
+  if (diffSecs <= 0 || diffSecs > 45*60) return null;
+
+  const mins = Math.floor(diffSecs/60);
+  const secs = diffSecs%60;
+  const isClose = diffSecs <= 5*60;
+  const col = isClose ? C.red : C.gold;
+
+  return (
+    <div style={{ background:`${col}12`, borderBottom:`1px solid ${col}40`, padding:"8px 24px" }}>
+      <div style={{ maxWidth:1280, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:7, height:7, borderRadius:"50%", background:col, animation:"pulse 1s infinite" }}/>
+          <span style={{ ...mono, fontSize:9, color:col, fontWeight:700, letterSpacing:"0.14em" }}>HIGH IMPACT EVENT</span>
+          <span style={{ ...mono, fontSize:10, color:C.bright }}>{event.event}</span>
+        </div>
+        <div style={{ ...mono, fontSize:13, fontWeight:800, color:col, letterSpacing:"0.06em" }}>
+          {mins}:{secs.toString().padStart(2,"0")} remaining
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [time,        setTime]        = useState(new Date());
   const [prices,      setPrices]      = useState({});
-  const [briefings,   setBriefings]   = useState([]);
-  const [briefLoading,setBriefLoading]= useState(false);
-  const [lastBrief,   setLastBrief]   = useState(null);
+  const [bellAlert,   setBellAlert]   = useState(false);
+  const [countdown,   setCountdown]   = useState(null);
   const [priceLoading,setPriceLoading]= useState(true);
   const [events,      setEvents]      = useState([]);
   const [macro,       setMacro]       = useState(null);
@@ -755,7 +736,32 @@ export default function App() {
   const [isBaseline,  setIsBaseline]  = useState(false);
   const [savedAt,     setSavedAt]     = useState(null);
 
-  useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return()=>clearInterval(t); },[]);
+  useEffect(()=>{
+    const t = setInterval(()=>{
+      const now = new Date();
+      setTime(now);
+
+      // Opening Bell alert at exactly 9:30 AM ET
+      const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+      if (h===9 && m===30 && s<10) {
+        setBellAlert(true);
+        // Play bell sound
+        try {
+          const ctx = new (window.AudioContext||window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime+1.5);
+          gain.gain.setValueAtTime(0.6, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+2);
+          osc.start(); osc.stop(ctx.currentTime+2);
+        } catch {}
+        setTimeout(()=>setBellAlert(false), 8000);
+      }
+    }, 1000);
+    return()=>clearInterval(t);
+  },[]);
 
   // Load saved or baseline data immediately on mount — never blank
   useEffect(()=>{
@@ -805,7 +811,19 @@ export default function App() {
             forecast: e.estimate || "—",
             prev:     e.prev || "—",
           }));
-        if (evts.length) { setEvents(evts.slice(0,8)); setCalLoading(false); return; }
+        if (evts.length) {
+          setEvents(evts.slice(0,8));
+          // Find next high impact event for countdown
+          const nowMins = new Date().getHours()*60+new Date().getMinutes();
+          const next = evts.find(e=>{
+            if (e.impact!=="HIGH") return false;
+            const [eh,em] = (e.time||"--:--").split(":").map(Number);
+            if (isNaN(eh)) return false;
+            return (eh*60+em) > nowMins;
+          });
+          setCountdown(next||null);
+          setCalLoading(false); return;
+        }
       }
     } catch {}
     // Fallback to FF via proxy
@@ -934,71 +952,15 @@ ${headlines.map((h,i) => `${i+1}. ${h}`).join("
     setAiLoading(false);
   },[]);
 
-  const generateBriefing = useCallback(async(currentMacro, currentPrices, currentEvents)=>{
-    // Only run during NY session hours (8:30 AM - 5:00 PM ET)
-    const h = new Date().getHours();
-    const m = new Date().getMinutes();
-    const t = h * 60 + m;
-    const inSession = t >= 8*60+30 && t <= 17*60;
-
-    // Build context from current data
-    const windowId  = getWindowId();
-    const windowMap = { pre:"PRE-POSITION (8:55-9:25)", open:"OPEN AUCTION (9:30-9:33)", trap:"TRAP CONFIRM (9:33-9:39)", expand:"EXPANSION (9:39-10:00)", cont:"CONTINUATION (10:00+)" };
-    const window    = windowMap[windowId] || windowId;
-    const timeStr   = new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:true});
-
-    const qqq = currentPrices?.QQQ;
-    const dia = currentPrices?.DIA;
-    const priceCtx = qqq && dia
-      ? `QQQ ${qqq.changePct>=0?"+":""}${qqq.changePct?.toFixed(2)}% ($${qqq.price?.toFixed(2)}) | DIA ${dia.changePct>=0?"+":""}${dia.changePct?.toFixed(2)}% ($${dia.price?.toFixed(2)})`
-      : "Price data unavailable";
-
-    const highEvents = (currentEvents||[]).filter(e=>e.impact==="HIGH").map(e=>`${e.time} ${e.event}`).join(", ") || "None";
-
-    const macroCtx = currentMacro
-      ? `Fed: ${currentMacro.fed_tone} | Inflation: ${currentMacro.inflation} | Risk: ${currentMacro.risk_tone} | NQ Pressure: ${currentMacro.nq_pressure} | YM Pressure: ${currentMacro.ym_pressure}`
-      : "Macro: baseline context";
-
-    setBriefLoading(true);
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:200,
-          system:`You are an institutional trading briefing system for a futures scalper who trades NQ and YM.
-Generate a concise private briefing in 2-3 sentences max. Use institutional language.
-Format: State current market condition, what NQ and YM are doing, and one key thing to watch.
-Do NOT give trade signals or say buy/sell. Context only. Be direct and specific.`,
-          messages:[{role:"user", content:`Time: ${timeStr} | Window: ${window}
-Prices: ${priceCtx}
-Macro: ${macroCtx}
-High-impact events today: ${highEvents}
-${inSession ? "NY session is ACTIVE." : "NY session is CLOSED. Generate end-of-session or pre-session context."}
-Generate the briefing now.`}]
-        })
-      });
-      const data = await res.json();
-      const text = (data.content||[]).map(b=>b.text||"").join("").trim();
-      if (text) {
-        const newBrief = { time:timeStr, text, window, inSession };
-        setBriefings(prev => [newBrief, ...prev].slice(0,12));
-        setLastBrief(new Date());
-      }
-    } catch(e) { console.warn("Briefing error:", e); }
-    setBriefLoading(false);
-  },[]);
 
   useEffect(()=>{
     fetchCalendar();
     fetchAndSynthesize();
     fetchPrices();
-    // Generate first briefing after 3 seconds so prices/macro load first
-    const initTimer = setTimeout(()=>generateBriefing(macro, prices, events), 3000);
     const t1=setInterval(fetchAndSynthesize,5*60*1000);
     const t2=setInterval(fetchCalendar,10*60*1000);
     const t3=setInterval(fetchPrices,15*1000);
-    const t4=setInterval(()=>generateBriefing(macro,prices,events),5*60*1000);
-    return()=>{clearTimeout(initTimer);clearInterval(t1);clearInterval(t2);clearInterval(t3);clearInterval(t4);};
+return()=>{clearInterval(t1);clearInterval(t2);clearInterval(t3);};
   },[]);
 
   const timeStr = time.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true});
@@ -1047,6 +1009,12 @@ Generate the briefing now.`}]
         </div>
       </div>
 
+      {/* Opening Bell Alert */}
+      <OpeningBellAlert show={bellAlert}/>
+
+      {/* High Impact Countdown */}
+      <CountdownBanner event={countdown} currentTime={time}/>
+
       {/* Price Ticker */}
       <PriceTicker prices={prices} loading={priceLoading}/>
 
@@ -1060,14 +1028,6 @@ Generate the briefing now.`}]
         <ContextPanel events={events} calLoading={calLoading}/>
         <ExecutionPanel macro={macro} events={events}/>
       </div>
-
-      {/* Private Briefings */}
-      <BriefingsPanel
-        briefings={briefings}
-        loading={briefLoading}
-        onGenerate={()=>generateBriefing(macro,prices,events)}
-        lastBrief={lastBrief}
-      />
 
       {/* FF Live Feed */}
       <FFLiveFeed feed={rawFeed} loading={aiLoading}/>
