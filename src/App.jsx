@@ -17,9 +17,9 @@ const FINNHUB_URL   = (sym) => `https://finnhub.io/api/v1/quote?symbol=${sym}&to
 
 // QQQ = NQ proxy, DIA = YM proxy, GLD = Gold proxy
 const PRICE_SYMBOLS = [
-  { symbol:"QQQ",  label:"NQ",   name:"Nasdaq / NQ",  color:"#00d4ff" },
-  { symbol:"DIA",  label:"YM",   name:"Dow / YM",     color:"#00c87a" },
-  { symbol:"GLD",  label:"GOLD", name:"Gold",         color:"#f0a500" },
+  { symbol:"QQQ",  label:"QQQ",  name:"Nasdaq / NQ proxy",  color:"#00d4ff" },
+  { symbol:"DIA",  label:"DIA",  name:"Dow / YM proxy",     color:"#00c87a" },
+  { symbol:"GLD",  label:"GLD",  name:"Gold proxy",         color:"#f0a500" },
 ];
 
 // ─── BASELINE DEFAULTS — always shown when no live data ───────────────────────
